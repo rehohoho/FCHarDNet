@@ -26,7 +26,7 @@ def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
 
-def train(cfg, writer, logger):
+def train(cfg, writer, logger, model_only=False):
 
     # Setup seeds
     torch.manual_seed(cfg.get("seed", 1337))
@@ -107,9 +107,10 @@ def train(cfg, writer, logger):
             )
             checkpoint = torch.load(cfg["training"]["resume"])
             model.load_state_dict(checkpoint["model_state"])
-            # optimizer.load_state_dict(checkpoint["optimizer_state"])
-            # scheduler.load_state_dict(checkpoint["scheduler_state"])
-            # start_iter = checkpoint["epoch"]
+            if not model_only:
+                optimizer.load_state_dict(checkpoint["optimizer_state"])
+                scheduler.load_state_dict(checkpoint["scheduler_state"])
+                start_iter = checkpoint["epoch"]
             logger.info(
                 "Loaded checkpoint '{}' (iter {})".format(
                     cfg["training"]["resume"], checkpoint["epoch"]
@@ -245,8 +246,14 @@ if __name__ == "__main__":
         "--config",
         nargs="?",
         type=str,
-        default="configs/combined.yml",
+        default="configs/scooter.yml",
         help="Configuration file to use",
+    )
+    parser.add_argument(
+        "--model_only",
+        default=False,
+        action='store_true',
+        help="load model weights in checkpoint only, no optimizer, scheduler and epoch",
     )
 
     args = parser.parse_args()
@@ -264,4 +271,4 @@ if __name__ == "__main__":
     logger = get_logger(logdir)
     logger.info("Let the games begin")
 
-    train(cfg, writer, logger)
+    train(cfg, writer, logger, args.model_only)
