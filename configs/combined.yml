@@ -9,7 +9,7 @@ data:
     path: /home/whizz/Desktop/deeplabv3/datasets/
     sbd_path: /mnt/ssd2/Cityscapes/
 training:
-    train_iters: 90000
+    train_iters: 120000
     batch_size: 8
     val_interval: 1000
     n_workers: 8
@@ -29,6 +29,6 @@ training:
         size_average: True
     lr_schedule: 
         name: 'poly_lr'
-        max_iter: 90000
-    resume: /home/whizz/Desktop/deeplabv3/FCHarDNet/weights/hardnet70_cityscapes_model.pkl
+        max_iter: 120000
+    resume: /home/whizz/Desktop/deeplabv3/FCHarDNet/runs/combined/cur/hardnet_combined_checkpoint.pkl
     finetune: None    
