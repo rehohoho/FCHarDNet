@@ -10,8 +10,8 @@ data:
     sbd_path: /mnt/ssd2/Cityscapes/
 training:
     train_iters: 90000
-    batch_size: 16
-    val_interval: 500
+    batch_size: 8
+    val_interval: 1000
     n_workers: 8
     print_interval: 10
     augmentations:
@@ -30,5 +30,5 @@ training:
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 90000
-    resume: None
+    resume: /home/whizz/Desktop/deeplabv3/FCHarDNet/weights/hardnet70_cityscapes_model.pkl
     finetune: None    

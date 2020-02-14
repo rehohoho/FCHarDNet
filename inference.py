@@ -4,12 +4,15 @@ from PIL import Image
 import torch
 from ptsemseg.models.hardnet import hardnet
 
+from ptsemseg.models import get_model
+
 
 ## LOAD PRETRAIN AND SAVE
 # with open('configs/hardnet.yml') as fp:
 #     cfg = yaml.load(fp)
 
-# model = get_model(cfg["model"], n_classes).to(device)
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# model = get_model(cfg["model"], 19).to(device)
 # model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
 # weights = torch.load('weights/hardnet70_cityscapes_model.pkl')
 # # weights = torch.load('weights/hardnet_petite_base.pth')
