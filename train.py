@@ -107,9 +107,9 @@ def train(cfg, writer, logger):
             )
             checkpoint = torch.load(cfg["training"]["resume"])
             model.load_state_dict(checkpoint["model_state"])
-            optimizer.load_state_dict(checkpoint["optimizer_state"])
-            scheduler.load_state_dict(checkpoint["scheduler_state"])
-            start_iter = checkpoint["epoch"]
+            # optimizer.load_state_dict(checkpoint["optimizer_state"])
+            # scheduler.load_state_dict(checkpoint["scheduler_state"])
+            # start_iter = checkpoint["epoch"]
             logger.info(
                 "Loaded checkpoint '{}' (iter {})".format(
                     cfg["training"]["resume"], checkpoint["epoch"]
@@ -245,7 +245,7 @@ if __name__ == "__main__":
         "--config",
         nargs="?",
         type=str,
-        default="configs/hardnet.yml",
+        default="configs/combined.yml",
         help="Configuration file to use",
     )
 
