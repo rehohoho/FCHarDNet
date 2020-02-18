@@ -4,8 +4,8 @@ data:
     dataset: scooter
     train_split: train
     val_split: val
-    img_rows: 1024
-    img_cols: 1024
+    img_rows: 513
+    img_cols: 513
     path: /home/whizz/Desktop/deeplabv3/datasets/
     sbd_path: /mnt/ssd2/Cityscapes/
 training:
@@ -19,7 +19,7 @@ training:
         rscale_crop: [1024, 1024]
     optimizer:
         name: 'sgd'
-        lr: 5.10473e-07
+        lr: 0.02
         weight_decay: 0.0005
         momentum: 0.9
     loss:
@@ -30,5 +30,5 @@ training:
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 180000
-    resume: /home/whizz/Desktop/deeplabv3/FCHarDNet/runs/scooter/cur/hardnet_scooter_checkpoint.pkl
+    resume: /home/whizz/Desktop/deeplabv3/FCHarDNet/weights/hardnet70_cityscapes_model.pkl
     finetune: None    

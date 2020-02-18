@@ -19,7 +19,7 @@ training:
         rscale_crop: [1024, 1024]
     optimizer:
         name: 'sgd'
-        lr: 0.02
+        lr: 6.6133e-07
         weight_decay: 0.0005
         momentum: 0.9
     loss:
