@@ -7,6 +7,7 @@ import random
 import argparse
 import numpy as np
 import torch.nn as nn
+from math import log10, floor
 
 from torch.utils import data
 from tqdm import tqdm
@@ -26,7 +27,7 @@ def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
 
-def train(cfg, writer, logger, model_only=False):
+def train(cfg, writer, logger, start_iter=0, model_only=False):
 
     # Setup seeds
     torch.manual_seed(cfg.get("seed", 1337))
@@ -99,7 +100,6 @@ def train(cfg, writer, logger, model_only=False):
     loss_fn = get_loss_function(cfg)
     print("Using loss {}".format(loss_fn))
 
-    start_iter = 0
     if cfg["training"]["resume"] is not None:
         if os.path.isfile(cfg["training"]["resume"]):
             logger.info(
@@ -255,6 +255,12 @@ if __name__ == "__main__":
         action='store_true',
         help="load model weights in checkpoint only, no optimizer, scheduler and epoch",
     )
+    parser.add_argument(
+        "--start_iter",
+        default=0,
+        type=int,
+        help="fix starting iteration if loading model_only",
+    )
 
     args = parser.parse_args()
 
@@ -271,4 +277,4 @@ if __name__ == "__main__":
     logger = get_logger(logdir)
     logger.info("Let the games begin")
 
-    train(cfg, writer, logger, args.model_only)
+    train(cfg, writer, logger, args.start_iter, args.model_only)
