@@ -1,34 +1,22 @@
 import yaml
+import glob
+import os
 import numpy as np
 from PIL import Image
+import argparse
+
 import torch
 from ptsemseg.models.hardnet import hardnet
-
 from ptsemseg.models import get_model
 
 
-## LOAD PRETRAIN AND SAVE
-# with open('configs/hardnet.yml') as fp:
-#     cfg = yaml.load(fp)
-
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# model = get_model(cfg["model"], 19).to(device)
-# model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
-# weights = torch.load('weights/hardnet70_cityscapes_model.pkl')
-# # weights = torch.load('weights/hardnet_petite_base.pth')
-# model.load_state_dict(weights['model_state'])
-
-# torch.save(model, 'bloop.pth')
-
-
-## OUTPUT TO TEXT
-# model = torch.load('weights/hardnet_petite_base.pth')
-# model = torch.load('weights/hardnet70_cityscapes_model.pkl')
-# output = []
-# for i in model['model_state']:
-#     output.append( i+':'+ str(np.shape(model['model_state'][i])) )
-# with open('state_dict_cityscapes.txt', 'w') as f:
-#     f.write( '\n'.join(output) )
+def get_tensornames_to_txtfile(model_path, output_path):
+    model = torch.load(model_path)
+    output = []
+    for i in model['model_state']:
+        output.append( i+':'+ str(np.shape(model['model_state'][i])) )
+    with open(output_path, 'w') as f:
+        f.write( '\n'.join(output) )
 
 
 # LOAD AND INFER
@@ -55,8 +43,9 @@ CITYSCAPES_COLORMAP = np.array( [
     
     ], dtype = np.uint8)
 
-def process_img(img_path):
-    img = Image.open(img_path).resize((2048,1024))
+
+def process_img(img, resize = False):
+
     img = np.array(img, dtype=np.float64)
     img = img[:, :, ::-1]  # RGB -> BGR
     
@@ -71,20 +60,76 @@ def process_img(img_path):
 
     return(img)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = hardnet(n_classes=19).to(device)
-model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
-weights = torch.load('weights/hardnet70_cityscapes_model.pkl')
-model.load_state_dict(weights['model_state'])
-print('model is loaded')
 
-img = process_img('bloop.jpg')
+def inference_on_folder(folder_path, output_path, model_path, resize):
 
-outputs = model(img.unsqueeze(0))
-pred = np.squeeze(outputs.data.max(1)[1].cpu().numpy(), axis=0)
+    # load the model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = hardnet(n_classes=19).to(device)
+    model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
+    weights = torch.load(model_path)
+    model.load_state_dict(weights['model_state'])
+    print('model is loaded')
 
-print(pred)
-print(np.shape(pred))
-vis = CITYSCAPES_COLORMAP[pred]
-vis = Image.fromarray(vis)
-vis.save('bloop_mask.png')
+    if not os.path.exists(output_path):
+        os.mkdir(output_path)
+        print('output directory not found, created one %s' %output_path)
+
+    filenames = [file for file in 
+        glob.glob( os.path.join(folder_path, '**/*.png'), recursive=True )
+    ]
+
+    for filename in filenames:
+        
+        dirname = os.path.join( output_path, filename.split('/')[-2] )
+        if not os.path.exists(dirname):
+            print('Creating directory at %s' %dirname)
+            os.mkdir(dirname)
+
+        img = Image.open(filename)
+        
+        if resize:
+            width, height = img.size                # resizing such that max = max_input_size
+            resize_ratio = 513 / max(width, height)
+            target_size = (int(resize_ratio * width), int(resize_ratio * height))
+            img = img.convert('RGB').resize(target_size, Image.ANTIALIAS)
+
+        img_tensor = process_img(img, resize = resize)
+        outputs = model(img_tensor.unsqueeze(0))
+        pred = np.squeeze(outputs.data.max(1)[1].cpu().numpy(), axis=0)
+        seg_im = CITYSCAPES_COLORMAP[pred]
+
+        seg_im = np.hstack((img, seg_im))
+        
+        basename = os.path.join( filename.split('/')[-2], os.path.basename(filename) )
+        Image.fromarray(seg_im).save( os.path.join(output_path, basename) )
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        '-f', '--folder_path',
+        required=True,
+        help= "path to folder with images"
+    )
+    parser.add_argument(
+        '-o', '--output_path',
+        required=True,
+        help= "path to folder to output"
+    )
+    parser.add_argument(
+        '-m', '--model_path',
+        required=True,
+        help= "path to fchardnet model"
+    )
+    parser.add_argument(
+        '-r', '--resize',
+        default=False,
+        action='store_true',
+        help= "option to resize"
+    )
+
+    args = parser.parse_args()
+    inference_on_folder(args.folder_path, args.output_path, args.model_path, args.resize)
