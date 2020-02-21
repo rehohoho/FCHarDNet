@@ -45,6 +45,10 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
     # Setup Dataloader
     data_loader = get_loader(cfg["data"]["dataset"])
     data_path = cfg["data"]["path"]
+    if "version" in cfg["data"]:
+        version = cfg["data"]["version"]
+    else:
+        version = "cityscapes"
 
     t_loader = data_loader(
         data_path,
@@ -52,6 +56,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
         split=cfg["data"]["train_split"],
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
         augmentations=data_aug,
+        version=version,
     )
 
     v_loader = data_loader(
@@ -59,6 +64,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
         is_transform=True,
         split=cfg["data"]["val_split"],
         img_size=(1024,2048),
+        version=version,
     )
 
     n_classes = t_loader.n_classes
