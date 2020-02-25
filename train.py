@@ -23,6 +23,22 @@ from ptsemseg.optimizers import get_optimizer
 
 from tensorboardX import SummaryWriter
 
+
+def write_images_to_board(v_loader, i_val, image, gt, pred, step):
+    
+    writer_label = v_loader.decode_segmap(gt)
+    writer_label = writer_label.transpose(2, 0, 1)
+    writer_label = torch.Tensor(writer_label).type('torch.cuda.FloatTensor')
+    
+    writer_pred = v_loader.decode_segmap(pred)
+    writer_pred = writer_pred.transpose(2, 0, 1)
+    writer_pred = torch.Tensor(writer_pred).type('torch.cuda.FloatTensor')
+
+    writer.add_image('%s_Image' %i_val, image, step)
+    writer.add_image('%s_Label' %i_val, writer_label, step)
+    writer.add_image('%s_Pred' %i_val, writer_pred, step)
+
+
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
@@ -141,6 +157,8 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
     flag = True
     loss_all = 0
     loss_n = 0
+    max_n_images = cfg["training"]["batch_size"] * 20
+
     while i <= cfg["training"]["train_iters"] and flag:
         for (images, labels, _) in trainloader:
             i += 1
@@ -199,7 +217,11 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
                         running_metrics_val.update(gt, pred)
                         val_loss_meter.update(val_loss.item())
 
+                        if i_val <= max_n_images:
+                            write_images_to_board(v_loader, i_val, images_val[0], gt[0], pred[0], i)
+
                 writer.add_scalar("loss/val_loss", val_loss_meter.avg, i + 1)
+
                 logger.info("Iter %d Val Loss: %.4f" % (i + 1, val_loss_meter.avg))
 
                 score, class_iou = running_metrics_val.get_scores()
