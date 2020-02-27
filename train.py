@@ -119,6 +119,8 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
 
     scheduler = get_scheduler(optimizer, cfg["training"]["lr_schedule"])
 
+    if 'weight' in cfg['training']['loss']:
+        cfg['training']['loss']['weight'] = torch.Tensor(cfg['training']['loss']['weight']).to(device)
     loss_fn = get_loss_function(cfg)
     print("Using loss {}".format(loss_fn))
 

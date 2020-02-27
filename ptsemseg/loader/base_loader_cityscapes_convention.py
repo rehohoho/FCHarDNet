@@ -75,6 +75,9 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         if 'scooter' in datasets:
             self.files[split] += [ file for file in glob.glob(
                 os.path.join(self.root, 'scooter/*images', self.split, '**/*.png')) ]
+        if 'scooter_small' in datasets:
+            self.files[split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter_small/*images', self.split, '**/*.png')) ]
         if 'mapillary' in datasets:
             self.files[split] += [ file for file in glob.glob(
                 os.path.join(self.root, 'mapillary/*images', self.split, '*.jpg')) ]
@@ -108,7 +111,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
             lbl_path = img_path.replace('images','label').replace('.jpg', '_train_id.png')
         elif dataset_type == 'cityscapes':
             lbl_path = img_path.replace('images','seg').replace('_leftImg8bit.png','_gtFine_labelIds.png')
-        elif dataset_type == 'scooter':
+        elif dataset_type == 'scooter' or 'scooter_small':
             lbl_path = img_path.replace('images','seg')
         
         name = img_path.split(os.sep)[-1][:-4] + ".png"
