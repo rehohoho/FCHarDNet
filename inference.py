@@ -7,7 +7,6 @@ import argparse
 
 import torch
 from ptsemseg.models.hardnet import hardnet
-from ptsemseg.models import get_model
 
 
 def get_tensornames_to_txtfile(model_path, output_path):

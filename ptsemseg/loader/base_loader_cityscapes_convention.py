@@ -78,6 +78,9 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         if 'scooter_small' in datasets:
             self.files[split] += [ file for file in glob.glob(
                 os.path.join(self.root, 'scooter_small/*images', self.split, '**/*.png')) ]
+        if 'scooter_halflabelled' in datasets:
+            self.files[split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter_halflabelled/*images', self.split, '**/*.png')) ]
         if 'mapillary' in datasets:
             self.files[split] += [ file for file in glob.glob(
                 os.path.join(self.root, 'mapillary/*images', self.split, '*.jpg')) ]
