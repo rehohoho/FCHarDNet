@@ -43,7 +43,7 @@ def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
 
-def train(cfg, writer, logger, start_iter=0, model_only=False):
+def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1):
 
     # Setup seeds
     torch.manual_seed(cfg.get("seed", 1337))
@@ -52,7 +52,10 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
     random.seed(cfg.get("seed", 1337))
 
     # Setup device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if gpu == -1:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cuda:%d" %gpu if torch.cuda.is_available() else "cpu")
 
     # Setup Augmentations
     augmentations = cfg["training"].get("augmentations", None)
@@ -104,7 +107,10 @@ def train(cfg, writer, logger, start_iter=0, model_only=False):
     total_params = sum(p.numel() for p in model.parameters())
     print( 'Parameters:',total_params )
 
-    model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
+    if gpu == -1:
+        model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
+    else:
+        model = torch.nn.DataParallel(model, device_ids=[gpu])
     model.apply(weights_init)
     pretrained_path='weights/hardnet_petite_base.pth'
     weights = torch.load(pretrained_path)
@@ -291,6 +297,12 @@ if __name__ == "__main__":
         type=int,
         help="fix starting iteration if loading model_only",
     )
+    parser.add_argument(
+        "--gpu",
+        default=-1,
+        type=int,
+        help="specify which gpu to use",
+    )
 
     args = parser.parse_args()
 
@@ -307,4 +319,4 @@ if __name__ == "__main__":
     logger = get_logger(logdir)
     logger.info("Let the games begin")
 
-    train(cfg, writer, logger, args.start_iter, args.model_only)
+    train(cfg, writer, logger, args.start_iter, args.model_only, gpu = args.gpu)
