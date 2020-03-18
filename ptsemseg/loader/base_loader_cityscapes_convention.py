@@ -117,7 +117,8 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         elif dataset_type == 'scooter' or 'scooter_small':
             lbl_path = img_path.replace('images','seg')
         
-        name = img_path.split(os.sep)[-1][:-4] + ".png"
+        name = img_path.split(os.sep)[-2:]
+        name = os.path.join(name[0], name[1])
 
         img = Image.open(img_path)
         img = np.array(img, dtype=np.uint8)
