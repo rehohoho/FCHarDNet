@@ -8,6 +8,7 @@ import argparse
 import numpy as np
 import torch.nn as nn
 from math import log10, floor
+from PIL import Image
 
 from torch.utils import data
 from tqdm import tqdm
@@ -24,26 +25,59 @@ from ptsemseg.optimizers import get_optimizer
 from tensorboardX import SummaryWriter
 
 
-def write_images_to_board(v_loader, i_val, image, gt, pred, step):
+def write_images_to_board(loader, i_val, image, gt, pred, step, name):
     
-    writer_label = v_loader.decode_segmap(gt)
+    writer_label = loader.decode_segmap(gt)
     writer_label = writer_label.transpose(2, 0, 1)
     writer_label = torch.Tensor(writer_label).type('torch.cuda.FloatTensor')
     
-    writer_pred = v_loader.decode_segmap(pred)
+    writer_pred = loader.decode_segmap(pred)
     writer_pred = writer_pred.transpose(2, 0, 1)
     writer_pred = torch.Tensor(writer_pred).type('torch.cuda.FloatTensor')
 
-    writer.add_image('%s_Image' %i_val, image, step)
-    writer.add_image('%s_Label' %i_val, writer_label, step)
-    writer.add_image('%s_Pred' %i_val, writer_pred, step)
+    writer.add_image('%s_%s_Image' %(name, i_val), image, step)
+    writer.add_image('%s_%s_Label' %(name, i_val), writer_label, step)
+    writer.add_image('%s_%s_Pred' %(name, i_val), writer_pred, step)
+
+
+def get_image_from_tensor(image, mask = False):
+    
+    if mask:
+        image *= 255
+    else:
+        std = np.array([57.375, 57.12 , 58.395])
+        mean = np.array([103.53 , 116.28 , 123.675])
+        image = (image * std + mean)
+    
+    image = Image.fromarray(image.astype(np.uint8))
+    return image
+
+
+def write_images_to_dir(loader, image, gt, pred, step, save_dir, name):
+    
+    if save_dir is None:
+        print('No save directory specified to log images locally.')
+        return
+
+    writer_label = [loader.decode_segmap(i)
+                            for i in gt]
+    
+    writer_pred = [ loader.decode_segmap(i)
+                            for i in pred]
+    
+    save_path = os.path.join(save_dir, str(step))
+    
+    for i in range(len(image)):
+        get_image_from_tensor(image[i]).save('%s_%s_%d_Image.png' %(save_path, name, i))
+        get_image_from_tensor(writer_label[i], mask=True).save('%s_%s_%d_Label.png' %(save_path, name, i))
+        get_image_from_tensor(writer_pred[i], mask=True).save('%s_%s_%d_Pred.png' %(save_path, name, i))
 
 
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
 
-def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1):
+def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=None):
 
     # Setup seeds
     torch.manual_seed(cfg.get("seed", 1337))
@@ -111,6 +145,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1):
         model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
     else:
         model = torch.nn.DataParallel(model, device_ids=[gpu])
+    
     model.apply(weights_init)
     pretrained_path='weights/hardnet_petite_base.pth'
     weights = torch.load(pretrained_path)
@@ -165,9 +200,11 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1):
     flag = True
     loss_all = 0
     loss_n = 0
-    max_n_images = cfg["training"]["batch_size"] * 20
+    max_n_images = 10
+    max_n_batches = 1
 
     while i <= cfg["training"]["train_iters"] and flag:
+        i_train = 0
         for (images, labels, _) in trainloader:
             i += 1
             start_ts = time.time()
@@ -178,6 +215,16 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1):
 
             optimizer.zero_grad()
             outputs = model(images)
+
+            # log images, labels, outputs
+            if i_train <= max_n_images:
+                pred = outputs.data.max(1)[1].cpu().numpy()
+                gt = labels.data.cpu().numpy()
+                write_images_to_board(t_loader, i_train, images[0], gt[0], pred[0], i, 'train')
+
+                if i_train <= max_n_batches:
+                    images = images.data.cpu().numpy().transpose(0, 2, 3, 1)
+                    write_images_to_dir(t_loader, images, gt, pred, i, save_dir, name='train')
 
             loss = loss_fn(input=outputs, target=labels)
             loss.backward()
@@ -225,8 +272,12 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1):
                         running_metrics_val.update(gt, pred)
                         val_loss_meter.update(val_loss.item())
 
+                        # log validation images
                         if i_val <= max_n_images:
-                            write_images_to_board(v_loader, i_val, images_val[0], gt[0], pred[0], i)
+                            write_images_to_board(v_loader, i_val, images_val[0], gt[0], pred[0], i, 'validation')
+                            if i_val <= max_n_batches:
+                                images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)
+                                write_images_to_dir(v_loader, images_val, gt, pred, i, save_dir, name='validation')
 
                 writer.add_scalar("loss/val_loss", val_loss_meter.avg, i + 1)
 
@@ -303,6 +354,12 @@ if __name__ == "__main__":
         type=int,
         help="specify which gpu to use",
     )
+    parser.add_argument(
+        "--save_images_locally",
+        default=False,
+        action='store_true',
+        help="flag to save images locally",
+    )
 
     args = parser.parse_args()
 
@@ -319,4 +376,11 @@ if __name__ == "__main__":
     logger = get_logger(logdir)
     logger.info("Let the games begin")
 
-    train(cfg, writer, logger, args.start_iter, args.model_only, gpu = args.gpu)
+    if args.save_images_locally:
+        save_dir = os.path.join(logdir, 'image_logs')
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+    else:
+        save_dir = None
+
+    train(cfg, writer, logger, args.start_iter, args.model_only, gpu = args.gpu, save_dir = save_dir)
