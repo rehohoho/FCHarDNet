@@ -116,7 +116,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
         data_path,
         is_transform=True,
         split=cfg["data"]["val_split"],
-        img_size=(1024,2048),
+        img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
         version=version,
     )
 
