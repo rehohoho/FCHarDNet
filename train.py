@@ -55,10 +55,6 @@ def get_image_from_tensor(image, mask = False):
 
 def write_images_to_dir(loader, image, gt, pred, step, save_dir, name):
     
-    if save_dir is None:
-        print('No save directory specified to log images locally.')
-        return
-
     writer_label = [loader.decode_segmap(i)
                             for i in gt]
     
@@ -217,7 +213,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
             outputs = model(images)
 
             # log images, labels, outputs
-            if i_train <= max_n_images:
+            if save_dir is not None and i_train <= max_n_images:
                 pred = outputs.data.max(1)[1].cpu().numpy()
                 gt = labels.data.cpu().numpy()
                 write_images_to_board(t_loader, i_train, images[0], gt[0], pred[0], i, 'train')
@@ -273,7 +269,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                         val_loss_meter.update(val_loss.item())
 
                         # log validation images
-                        if i_val <= max_n_images:
+                        if save_dir is not None and i_val <= max_n_images:
                             write_images_to_board(v_loader, i_val, images_val[0], gt[0], pred[0], i, 'validation')
                             if i_val <= max_n_batches:
                                 images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)
@@ -382,5 +378,6 @@ if __name__ == "__main__":
             os.mkdir(save_dir)
     else:
         save_dir = None
+        print('No save directory specified to log images locally.')
 
     train(cfg, writer, logger, args.start_iter, args.model_only, gpu = args.gpu, save_dir = save_dir)

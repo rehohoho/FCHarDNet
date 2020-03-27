@@ -15,7 +15,7 @@ cdef class label_handler:
     cdef int *mapillary_label
 
     cdef void setupCityScapes(self, int igr):
-        self.city_train_label = <int *> malloc ( 33 * sizeof(int))
+        self.city_train_label = <int *> malloc ( 256 * sizeof(int))
         cdef int *label_arr = self.city_train_label
 
         label_arr[0] = igr
@@ -57,7 +57,7 @@ cdef class label_handler:
     #if class does not exist in cityscapes, it is not trained on
     cdef void setupMapillary(self, int igr):
 
-        self.mapillary_label = <int *> malloc ( 66 * sizeof(int))
+        self.mapillary_label = <int *> malloc ( 256 * sizeof(int))
         cdef int *label_arr = self.mapillary_label
 
         label_arr[0] = igr      #bird
