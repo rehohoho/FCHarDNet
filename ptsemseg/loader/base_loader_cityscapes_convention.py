@@ -114,7 +114,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
             lbl_path = img_path.replace('images','label').replace('.jpg', '_train_id.png')
         elif dataset_type == 'cityscapes':
             lbl_path = img_path.replace('images','seg').replace('_leftImg8bit.png','_gtFine_labelIds.png')
-        elif dataset_type == 'scooter' or 'scooter_small':
+        elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled':
             lbl_path = img_path.replace('images','seg')
         
         name = img_path.split(os.sep)[-2:]
@@ -177,9 +177,12 @@ class BaseLoaderCityscapesConvention(data.Dataset):
 
         return img, lbl
 
-    # not used in training, only for testing in __main__, not changed for multiple datasets
-    # probably same since everything changed to use cityscapes labels
+    # used for logging or testing in __main__ only, fixed to cityscapes convention
     def decode_segmap(self, temp):
+        """ visualise segmentation map
+        Args:       temp    HW nd.array
+        Returns:    rgb     HWC nd.array
+        """
         r = temp.copy()
         g = temp.copy()
         b = temp.copy()
@@ -194,8 +197,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         rgb[:, :, 2] = b / 255.0
         return rgb
 
-    # not used in training, only for testing in __main__, not changed for multiple datasets
-    # probably same since everything changed to use cityscapes labels
+    # used in validation only in saving images
     def decode_segmap_id(self, temp):
         ids = np.zeros((temp.shape[0], temp.shape[1]),dtype=np.uint8)
         for l in range(0, self.n_classes):
