@@ -18,7 +18,7 @@ from ptsemseg.loss import get_loss_function
 from ptsemseg.loader import get_loader
 from ptsemseg.utils import get_logger
 from ptsemseg.metrics import runningScore, averageMeter
-from ptsemseg.augmentations import get_composed_augmentations
+from ptsemseg.augmentations import get_composed_augmentations, get_composed_augmentations_softmax
 from ptsemseg.schedulers import get_scheduler
 from ptsemseg.optimizers import get_optimizer
 
@@ -27,8 +27,8 @@ from tensorboardX import SummaryWriter
 
 def write_images_to_board(loader, i_val, image, gt, pred, step, name):
     
-    writer_label = loader.decode_segmap(gt)
-    writer_label = writer_label.transpose(2, 0, 1)
+    writer_label = loader.decode_segmap(gt) #takes HW nd.array, outputs HWC
+    writer_label = writer_label.transpose(2, 0, 1) #change to CHW
     writer_label = torch.Tensor(writer_label).type('torch.cuda.FloatTensor')
     
     writer_pred = loader.decode_segmap(pred)
@@ -75,11 +75,13 @@ def weights_init(m):
 
 def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=None):
 
-    # Setup seeds
+    # Setup seeds and config
     torch.manual_seed(cfg.get("seed", 1337))
     torch.cuda.manual_seed(cfg.get("seed", 1337))
     np.random.seed(cfg.get("seed", 1337))
     random.seed(cfg.get("seed", 1337))
+    
+    use_softmax_labels = cfg["data"]["dataset"] == "softmax_cityscapes_convention"
 
     # Setup device
     if gpu == -1:
@@ -89,7 +91,10 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
     # Setup Augmentations
     augmentations = cfg["training"].get("augmentations", None)
-    data_aug = get_composed_augmentations(augmentations)
+    if use_softmax_labels:
+        data_aug = get_composed_augmentations_softmax(augmentations)
+    else:
+        data_aug = get_composed_augmentations(augmentations)
 
     # Setup Dataloader
     data_loader = get_loader(cfg["data"]["dataset"])
@@ -206,23 +211,30 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
             start_ts = time.time()
             scheduler.step()
             model.train()
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.to(device)  #n,3,513,513
+            labels = labels.to(device)  #n,19,513,513
 
             optimizer.zero_grad()
-            outputs = model(images)
+            outputs = model(images)     #n,19,513,513
 
             # log images, labels, outputs
             if save_dir is not None and i_train <= max_n_images:
-                pred = outputs.data.max(1)[1].cpu().numpy()
-                gt = labels.data.cpu().numpy()
-                write_images_to_board(t_loader, i_train, images[0], gt[0], pred[0], i, 'train')
+                pred_array = outputs.data.max(1)[1].cpu().numpy()     #1,513,513
+                if use_softmax_labels:
+                    gt_array = labels.data.max(1)[1].cpu().numpy()    #1,513,513
+                else:
+                    gt_array = labels.data.cpu().numpy()
+                write_images_to_board(t_loader, i_train, images[0], gt_array[0], pred_array[0], i, 'train')
 
                 if i_train <= max_n_batches:
-                    images = images.data.cpu().numpy().transpose(0, 2, 3, 1)
-                    write_images_to_dir(t_loader, images, gt, pred, i, save_dir, name='train')
+                    image_array = images.data.cpu().numpy().transpose(0, 2, 3, 1)    #513,513,3
+                    write_images_to_dir(t_loader, image_array, gt_array, pred_array, i, save_dir, name='train')
 
-            loss = loss_fn(input=outputs, target=labels)
+            if use_softmax_labels: # has to be done outside loss function where image is not passed in
+                loss = loss_fn(input=outputs, target=labels, weight=t_loader.extract_ignore_mask(images))
+            else:
+                loss = loss_fn(input=outputs, target=labels)
+
             loss.backward()
             optimizer.step()
             c_lr = scheduler.get_lr()
@@ -240,7 +252,6 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                     time_meter.avg / cfg["training"]["batch_size"],
                     c_lr[0],
                 )
-                
 
                 print(print_str)
                 logger.info(print_str)
@@ -262,18 +273,18 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                         outputs = model(images_val)
                         val_loss = loss_fn(input=outputs, target=labels_val)
 
-                        pred = outputs.data.max(1)[1].cpu().numpy()
-                        gt = labels_val.data.cpu().numpy()
+                        pred_array = outputs.data.max(1)[1].cpu().numpy()
+                        gt_array = labels_val.data.cpu().numpy()
 
-                        running_metrics_val.update(gt, pred)
+                        running_metrics_val.update(gt_array, pred_array)
                         val_loss_meter.update(val_loss.item())
 
                         # log validation images
                         if save_dir is not None and i_val <= max_n_images:
-                            write_images_to_board(v_loader, i_val, images_val[0], gt[0], pred[0], i, 'validation')
+                            write_images_to_board(v_loader, i_val, images_val[0], gt_array[0], pred_array[0], i, 'validation')
                             if i_val <= max_n_batches:
                                 images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)
-                                write_images_to_dir(v_loader, images_val, gt, pred, i, save_dir, name='validation')
+                                write_images_to_dir(v_loader, images_val, gt_array, pred_array, i, save_dir, name='validation')
 
                 writer.add_scalar("loss/val_loss", val_loss_meter.avg, i + 1)
 
