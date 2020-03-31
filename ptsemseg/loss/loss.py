@@ -50,6 +50,7 @@ def bootstrapped_cross_entropy2d(input, target, min_K, loss_th, weight=None, siz
         n, c, h, w = input.size()
         input = input.transpose(1, 2).transpose(2, 3).contiguous().view(-1, c)
         target = target.view(-1)
+        # input CHW -> HWC -> NC, target HW -> N, for softmax loss that is dependent on each class
         loss = F.cross_entropy(
             input, target, weight=weight, reduce=False, size_average=False, ignore_index=250
         )
@@ -73,5 +74,35 @@ def bootstrapped_cross_entropy2d(input, target, min_K, loss_th, weight=None, siz
             thresh=thresh,
             weight=weight,
             size_average=size_average,
+        )
+    return loss / float(batch_size)
+
+
+def bootstrapped_binary_cross_entropy2d(input, target, weight=None):
+    n, c, h, w = input.size()
+    nt, nc, ht, wt = target.size()
+    batch_size = input.size()[0]
+    
+    if n != nt or c != nc:
+        print('Number of classes in predictions and labels are different!\n', input.size(), target.size())
+    if h != ht and w != wt:  # upsample labels
+        input = F.interpolate(input, size=(ht, wt), mode="bilinear", align_corners=True)
+    
+    def _bootstrap_binary_xentropy(input, target, weight=None):
+        
+        # weight is repeated to fit shape of input / target
+        loss = F.binary_cross_entropy_with_logits(
+            input, target, weight=weight, reduce=True, reduction='mean'
+        )
+
+        return loss
+
+    loss = 0.0
+    # Bootstrap from each image not entire batch
+    for i in range(batch_size):
+        loss += _bootstrap_binary_xentropy(
+            input=torch.unsqueeze(input[i], 0),
+            target=torch.unsqueeze(target[i], 0),
+            weight=weight[i]
         )
     return loss / float(batch_size)
