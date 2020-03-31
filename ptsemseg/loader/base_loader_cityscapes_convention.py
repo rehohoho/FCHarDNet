@@ -197,12 +197,9 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         rgb[:, :, 2] = b / 255.0
         return rgb
 
-    # used in validation only in saving images
+    # used in validation only in saving images, to convert back to test labels
     def decode_segmap_id(self, temp):
-        ids = np.zeros((temp.shape[0], temp.shape[1]),dtype=np.uint8)
-        for l in range(0, self.n_classes):
-            ids[temp == l] = self.valid_classes[l]
-        return ids
+        return temp
 
     def encode_segmap(self, mask, dataset_type):
         # Put all void classes to zero

@@ -5,7 +5,7 @@ import timeit
 import time
 import os
 import numpy as np
-import scipy.misc as misc
+import imageio
 
 from torch.utils import data
 from torchstat import stat
@@ -15,6 +15,7 @@ from ptsemseg.models import get_model
 from ptsemseg.loader import get_loader
 from ptsemseg.metrics import runningScore
 from ptsemseg.utils import convert_state_dict
+from ptsemseg.augmentations import get_composed_augmentations, get_composed_augmentations_softmax
 
 torch.backends.cudnn.benchmark = True
 
@@ -27,6 +28,15 @@ def validate(cfg, args):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Setup Augmentations
+    data_aug = None
+    if "validation" in cfg:
+        augmentations = cfg["validation"].get("augmentations", None)
+        if cfg["data"]["dataset"] == "softmax_cityscapes_convention":
+            data_aug = get_composed_augmentations_softmax(augmentations)
+        else:
+            data_aug = get_composed_augmentations(augmentations)
+
     # Setup Dataloader
     data_loader = get_loader(cfg["data"]["dataset"])
     data_path = cfg["data"]["path"]
@@ -38,9 +48,10 @@ def validate(cfg, args):
 
     loader = data_loader(
         data_path,
-        split=cfg["data"]["val_split"],
         is_transform=True,
-        img_size=(1024,2048),
+        split=cfg["data"]["val_split"],
+        img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
+        augmentations=data_aug,
         version=version,
     )
 
@@ -74,8 +85,7 @@ def validate(cfg, args):
     #stat(model, (3, 1024, 2048))
     torch.backends.cudnn.benchmark=True
 
-    output_csv_path = os.path.join(os.path.dirname(args.model_path), 'miou_logs.csv')
-    with open(output_csv_path, 'a') as output_csv:
+    with open(args.output_csv_path, 'a') as output_csv:
 
         output_csv.write('filename,miou,fps\n')
 
@@ -88,56 +98,42 @@ def validate(cfg, args):
                 with torch.no_grad():
                     outputs = model(images)        
             
-            if args.eval_flip:
+            torch.cuda.synchronize()
+            start_time = time.perf_counter()
+
+            with torch.no_grad():
                 outputs = model(images)
 
-                # Flip images in numpy (not support in tensor)
-                outputs = outputs.data.cpu().numpy()
-                flipped_images = np.copy(images.data.cpu().numpy()[:, :, :, ::-1])
-                flipped_images = torch.from_numpy(flipped_images).float().to(device)
-                outputs_flipped = model(flipped_images)
-                outputs_flipped = outputs_flipped.data.cpu().numpy()
-                outputs = (outputs + outputs_flipped[:, :, :, ::-1]) / 2.0
-
-                pred = np.argmax(outputs, axis=1)
-            else:
-                torch.cuda.synchronize()
-                start_time = time.perf_counter()
-
-                with torch.no_grad():
-                    outputs = model(images)
-
-                torch.cuda.synchronize()
-                elapsed_time = time.perf_counter() - start_time
+            torch.cuda.synchronize()
+            elapsed_time = time.perf_counter() - start_time
+            
+            if args.save_image:
+                pred = np.squeeze(outputs.data.max(1)[1].cpu().numpy(), axis=0)
                 
-                if args.save_image:
-                    pred = np.squeeze(outputs.data.max(1)[1].cpu().numpy(), axis=0)
-                    save_rgb = True
-                    
-                    decoded = loader.decode_segmap_id(pred)
-                    dir = "./out_predID/"
-                    if not os.path.exists(dir):
-                        os.mkdir(dir)
-                        misc.imsave(dir+fname[0], decoded)
+                decoded = loader.decode_segmap_id(pred)
+                dir = "./out_predID/"
+                if not os.path.exists(dir):
+                    os.mkdir(dir)
+                    imageio.imwrite(dir+fname[0], decoded)
 
-                    if save_rgb:
-                        decoded = loader.decode_segmap(pred)
-                        img_input = np.squeeze(images.cpu().numpy(),axis=0)
-                        img_input = img_input.transpose(1, 2, 0)
-                        blend = img_input * 0.2 + decoded * 0.8
-                        fname_new = fname[0]
-                        fname_new = fname_new[:-4]
-                        fname_new += '.jpg'
-                        dir = "./out_rgb/"
-                        if not os.path.exists(dir):
-                            os.mkdir(dir)
-                            misc.imsave(dir+fname_new, blend)
+                decoded = loader.decode_segmap(pred)
+                img_input = np.squeeze(images.cpu().numpy(),axis=0)
+                img_input = img_input.transpose(1, 2, 0)
+                blend = img_input * 0.2 + decoded * 0.8
+                fname_new = fname[0]
+                fname_new = fname_new[:-4]
+                fname_new += '.jpg'
+                dir = "./out_rgb/"
+                
+                if not os.path.exists(dir):
+                    os.mkdir(dir)
+                if not os.path.exists(os.path.join(dir, fname_new.split(os.sep)[0])):
+                    os.mkdir( os.path.join(dir, fname_new.split(os.sep)[0]) )
+                imageio.imwrite(dir+fname_new, blend)
 
-                    
-                pred = outputs.data.max(1)[1].cpu().numpy()
-
+            pred = outputs.data.max(1)[1].cpu().numpy()
             gt = labels.numpy()
-            s = np.sum(gt==pred) / (1024*2048)
+            s = np.sum(gt==pred) / (cfg["data"]["img_rows"] * cfg["data"]["img_cols"] - np.sum(gt == 250)) # consider ignore label == 250
 
             if args.measure_time:
                 total_time += elapsed_time
@@ -160,11 +156,16 @@ def validate(cfg, args):
       state2 = {"model_state": model.state_dict()}
       torch.save(state2, 'hardnet_cityscapes_mod.pth')
 
-    for k, v in score.items():
-        print(k, v)
+    with open(args.miou_logs_path, 'a') as main_output_csv:
+        main_output_csv.write( '%s\n' %args.output_csv_path )
 
-    for i in range(n_classes):
-        print(i, class_iou[i])
+        for k, v in score.items():
+            print(k, v)
+            main_output_csv.write( '%s,%s\n' %(k,v) )
+
+        for i in range(n_classes):
+            print(i, class_iou[i])
+            main_output_csv.write( '%s,%s\n' %(i, class_iou[i]) )
 
 
 if __name__ == "__main__":
@@ -183,21 +184,7 @@ if __name__ == "__main__":
         default="hardnet_cityscapes_best_model.pkl",
         help="Path to the saved model",
     )
-    parser.add_argument(
-        "--eval_flip",
-        dest="eval_flip",
-        action="store_true",
-        help="Enable evaluation with flipped image |\
-                              False by default",
-    )
-    parser.add_argument(
-        "--no-eval_flip",
-        dest="eval_flip",
-        action="store_false",
-        help="Disable evaluation with flipped image",
-    )
-    parser.set_defaults(eval_flip=False)
-
+    
     parser.add_argument(
         "--measure_time",
         dest="measure_time",
@@ -242,7 +229,25 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    with open(args.config) as fp:
-        cfg = yaml.load(fp)
+    if not args.config.endswith('yml'):
+        cfgs = os.listdir(args.config)
+    else:
+        cfgs = [args.config]
 
-    validate(cfg, args)
+    args.miou_logs_path = os.path.join(
+        os.path.dirname(args.model_path),
+        'overall_miou_logs.csv'
+    )
+
+    for cfg_filename in cfgs:
+        
+        cfg_filename = os.path.join(args.config, cfg_filename)
+
+        with open(cfg_filename) as fp:
+            cfg = yaml.load(fp)
+        
+        args.output_csv_path = os.path.join(
+            os.path.dirname(args.model_path), 
+            'perimage_logs_%s.csv' %os.path.basename(cfg_filename)[:-4]
+        )
+        validate(cfg, args)
