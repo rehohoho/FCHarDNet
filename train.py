@@ -25,19 +25,31 @@ from ptsemseg.optimizers import get_optimizer
 from tensorboardX import SummaryWriter
 
 
-def write_images_to_board(loader, i_val, image, gt, pred, step, name):
+def write_images_to_board(loader, image, gt, pred, step, name, softmax_gt = None):
     
-    writer_label = loader.decode_segmap(gt) #takes HW nd.array, outputs HWC
-    writer_label = writer_label.transpose(2, 0, 1) #change to CHW
-    writer_label = torch.Tensor(writer_label).type('torch.cuda.FloatTensor')
-    
-    writer_pred = loader.decode_segmap(pred)
-    writer_pred = writer_pred.transpose(2, 0, 1)
-    writer_pred = torch.Tensor(writer_pred).type('torch.cuda.FloatTensor')
+    batch_size = min(image.shape[0], 20)
 
-    writer.add_image('%s_%s_Image' %(name, i_val), image, step)
-    writer.add_image('%s_%s_Label' %(name, i_val), writer_label, step)
-    writer.add_image('%s_%s_Pred' %(name, i_val), writer_pred, step)
+    for i in range(batch_size):
+
+        vis_gt = loader.decode_segmap(gt[i]) #takes HW nd.array, outputs HWC
+        vis_gt = vis_gt.transpose(2, 0, 1) #change to CHW
+        vis_gt = torch.Tensor(vis_gt).type('torch.cuda.FloatTensor')
+        
+        vis_pred = loader.decode_segmap(pred[i])
+        vis_pred = vis_pred.transpose(2, 0, 1)
+        vis_pred = torch.Tensor(vis_pred).type('torch.cuda.FloatTensor')
+
+        writer.add_image('%s_%s_Image' %(name, i), image[i], step)
+        writer.add_image('%s_%s_Label' %(name, i), vis_gt, step)
+        writer.add_image('%s_%s_Pred' %(name, i), vis_pred, step)
+        
+        if softmax_gt is None:
+            continue
+        
+        vis_softmax = loader.decode_segmap(softmax_gt[i]) #takes HW nd.array, outputs HWC
+        vis_softmax = vis_softmax.transpose(2, 0, 1) #change to CHW
+        vis_softmax = torch.Tensor(vis_softmax).type('torch.cuda.FloatTensor')
+        writer.add_image('%s_%s_Softmax' %(name, i), vis_softmax, step)
 
 
 def get_image_from_tensor(image, mask = False):
@@ -53,20 +65,23 @@ def get_image_from_tensor(image, mask = False):
     return image
 
 
-def write_images_to_dir(loader, image, gt, pred, step, save_dir, name):
+def write_images_to_dir(loader, image, gt, pred, step, save_dir, name, softmax_gt = None):
     
-    writer_label = [loader.decode_segmap(i)
-                            for i in gt]
-    
-    writer_pred = [ loader.decode_segmap(i)
-                            for i in pred]
+    writer_label = [loader.decode_segmap(i) for i in gt]
+    vis_pred = [ loader.decode_segmap(i) for i in pred]
+    if softmax_gt is not None:
+        writer_softmax = [loader.decode_segmap(i) for i in softmax_gt]
     
     save_path = os.path.join(save_dir, str(step))
-    
-    for i in range(len(image)):
+    batch_size = min(image.shape[0], 20)
+
+    for i in range(batch_size):
         get_image_from_tensor(image[i]).save('%s_%s_%d_Image.png' %(save_path, name, i))
         get_image_from_tensor(writer_label[i], mask=True).save('%s_%s_%d_Label.png' %(save_path, name, i))
-        get_image_from_tensor(writer_pred[i], mask=True).save('%s_%s_%d_Pred.png' %(save_path, name, i))
+        get_image_from_tensor(vis_pred[i], mask=True).save('%s_%s_%d_Pred.png' %(save_path, name, i))
+
+        if softmax_gt is not None:
+            get_image_from_tensor(writer_softmax[i], mask=True).save('%s_%s_%d_Softmax.png' %(save_path, name, i))
 
 
 def weights_init(m):
@@ -201,37 +216,40 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     flag = True
     loss_all = 0
     loss_n = 0
-    max_n_images = 10
-    max_n_batches = 1
 
     while i <= cfg["training"]["train_iters"] and flag:
-        i_train = 0
         for (images, labels, _) in trainloader:
             i += 1
             start_ts = time.time()
             scheduler.step()
             model.train()
+
+            if use_softmax_labels:
+                softmax = labels[1].to(device)  #n,19,513,513
+                labels = labels[0]
+
             images = images.to(device)  #n,3,513,513
-            labels = labels.to(device)  #n,19,513,513
+            labels = labels.to(device)  #n,513,513
 
             optimizer.zero_grad()
             outputs = model(images)     #n,19,513,513
 
-            # log images, labels, outputs
-            if save_dir is not None and i_train <= max_n_images:
-                pred_array = outputs.data.max(1)[1].cpu().numpy()     #1,513,513
+            if i%1000 == 0:             # log images, labels, outputs
+                pred_array = outputs.data.max(1)[1].cpu().numpy()
+                gt_array = labels.data.cpu().numpy()
+                softmax_gt_array = None
+                
                 if use_softmax_labels:
-                    gt_array = labels.data.max(1)[1].cpu().numpy()    #1,513,513
-                else:
-                    gt_array = labels.data.cpu().numpy()
-                write_images_to_board(t_loader, i_train, images[0], gt_array[0], pred_array[0], i, 'train')
+                    softmax_gt_array = softmax.data.max(1)[1].cpu().numpy()
+                
+                write_images_to_board(t_loader, images, gt_array, pred_array, i, name = 'train', softmax_gt = softmax_gt_array)
 
-                if i_train <= max_n_batches:
-                    image_array = images.data.cpu().numpy().transpose(0, 2, 3, 1)    #513,513,3
-                    write_images_to_dir(t_loader, image_array, gt_array, pred_array, i, save_dir, name='train')
+                if save_dir is not None:
+                    image_array = images.data.cpu().numpy().transpose(0, 2, 3, 1)
+                    write_images_to_dir(t_loader, image_array, gt_array, pred_array, i, save_dir, name = 'train', softmax_gt = softmax_gt_array)
 
             if use_softmax_labels: # has to be done outside loss function where image is not passed in
-                loss = loss_fn(input=outputs, target=labels, weight=t_loader.extract_ignore_mask(images))
+                loss = loss_fn(input=outputs, target=(labels, softmax), weight=t_loader.extract_ignore_mask(images))
             else:
                 loss = loss_fn(input=outputs, target=labels)
 
@@ -268,6 +286,11 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                 with torch.no_grad():
                     for i_val, (images_val, labels_val, _) in tqdm(enumerate(valloader)):
                         images_val = images_val.to(device)
+                        
+                        # softmax layer does not need to be logged or considered in metrics calculation
+                        if use_softmax_labels:
+                            labels_val = labels[0]
+                            
                         labels_val = labels_val.to(device)
 
                         outputs = model(images_val)
