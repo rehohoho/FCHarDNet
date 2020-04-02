@@ -1,6 +1,7 @@
 from PIL import Image
 import imgaug.augmenters as iaa
 from imgaug.augmentables.heatmaps import HeatmapsOnImage
+from imgaug.augmentables.segmaps import SegmentationMapsOnImage
 import numpy as np
 
 
@@ -12,30 +13,36 @@ class ComposeSM(object):
     def __init__(self, augmentations):
         self.augmentations = augmentations
 
-    def __call__(self, img, softmax):
+    def __call__(self, img, segmap, softmax):
         
+        segmap = SegmentationMapsOnImage(segmap, shape=segmap.shape)
         softmax = HeatmapsOnImage(softmax, shape = softmax.shape)
 
-        assert img.shape[:2] == softmax.shape[:2]
+        assert img.shape[:2] == segmap.shape[:2] == softmax.shape[:2]
         for a in self.augmentations:
-            img, softmax = a(img, softmax)
+            img, segmap, softmax = a(img, segmap, softmax)
         
-        return img, softmax.get_arr()
+        return img, segmap.get_arr(), softmax.get_arr()
         
 
-class RandomHorizontallyFlipSM(object):
+class BaseImgaug(object):
+
+    def __call__(self, img, segmap, softmax):
+        
+        return self.seq(image = img, segmentation_maps = segmap, heatmaps = softmax)
+        
+
+class RandomHorizontallyFlipSM(BaseImgaug):
+    
     def __init__(self, p):
         
         self.seq = iaa.Sequential([
                 iaa.Fliplr(p),
         ])
 
-    def __call__(self, img, softmax):
-        
-        return self.seq(image = img, heatmaps = softmax)
 
-
-class RandomScaleCropSM(object):
+class RandomScaleCropSM(BaseImgaug):
+    
     def __init__(self, size):
         
         self.seq = iaa.Sequential(
@@ -44,8 +51,3 @@ class RandomScaleCropSM(object):
                 iaa.PadToFixedSize(width=size[0], height=size[1]),
                 iaa.CropToFixedSize(width=size[0], height=size[1]),
             ], random_order = False)
-
-            
-    def __call__(self, img, softmax):
-
-        return self.seq(image = img, heatmaps = softmax)

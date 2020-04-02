@@ -31,12 +31,16 @@ aug_dict = {
 }
 
 aug = get_composed_augmentations_softmax(aug_dict)
-npy = 'D:/perception_datasets/scooter_halflabelled/scooter_softmax/train/11-May-2019-17-54-07/frame_0_mid.npy'
 png = 'D:/perception_datasets/scooter_halflabelled/scooter_images/train/11-May-2019-17-54-07/frame_0_mid.png'
-im = np.array(Image.open(png).resize((513,384)))
+seg = 'D:/perception_datasets/scooter_halflabelled/scooter_seg/train/11-May-2019-17-54-07/frame_0_mid.png'
+npy = 'D:/perception_datasets/scooter_halflabelled/scooter_softmax_temp/train/11-May-2019-17-54-07/frame_0_mid.npy'
+im = np.array(Image.open(png))
+seg = np.array(Image.open(seg))
 npy = np.load(npy).astype(np.float32).transpose(1,2,0)
 
-augim, augseg = aug(im, npy)
-augsegim = CITYSCAPES_COLMAP[np.argmax(augseg, axis = 2).astype(np.uint8)]
-Image.fromarray(augim).save('im_aug.png')
-Image.fromarray(augsegim).save('npy_aug.png')
+aug_im, aug_seg, aug_segtemp = aug(im, seg, npy)
+aug_seg_im = CITYSCAPES_COLMAP[aug_seg]
+aug_segtemp_im = CITYSCAPES_COLMAP[np.argmax(aug_segtemp, axis = 2).astype(np.uint8)]
+Image.fromarray(aug_im).save('im_aug.png')
+Image.fromarray(aug_seg_im).save('seg_aug.png')
+Image.fromarray(aug_segtemp_im).save('npy_aug.png')
