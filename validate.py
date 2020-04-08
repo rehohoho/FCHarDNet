@@ -31,11 +31,17 @@ def validate(cfg, args):
     data_loader = get_loader(cfg["data"]["dataset"])
     data_path = cfg["data"]["path"]
 
+    if "version" in cfg["data"]:
+        version = cfg["data"]["version"]
+    else:
+        version = "cityscapes"
+
     loader = data_loader(
         data_path,
         split=cfg["data"]["val_split"],
         is_transform=True,
         img_size=(1024,2048),
+        version=version,
     )
 
     n_classes = loader.n_classes
@@ -68,77 +74,83 @@ def validate(cfg, args):
     #stat(model, (3, 1024, 2048))
     torch.backends.cudnn.benchmark=True
 
-    for i, (images, labels, fname) in enumerate(valloader):
-        start_time = timeit.default_timer()
+    output_csv_path = os.path.join(os.path.dirname(args.model_path), 'miou_logs.csv')
+    with open(output_csv_path, 'a') as output_csv:
 
-        images = images.to(device)
-        
-        if i == 0:
-          with torch.no_grad():
-            outputs = model(images)        
-        
-        if args.eval_flip:
-            outputs = model(images)
+        output_csv.write('filename,miou,fps\n')
 
-            # Flip images in numpy (not support in tensor)
-            outputs = outputs.data.cpu().numpy()
-            flipped_images = np.copy(images.data.cpu().numpy()[:, :, :, ::-1])
-            flipped_images = torch.from_numpy(flipped_images).float().to(device)
-            outputs_flipped = model(flipped_images)
-            outputs_flipped = outputs_flipped.data.cpu().numpy()
-            outputs = (outputs + outputs_flipped[:, :, :, ::-1]) / 2.0
+        for i, (images, labels, fname) in enumerate(valloader):
+            start_time = timeit.default_timer()
 
-            pred = np.argmax(outputs, axis=1)
-        else:
-            torch.cuda.synchronize()
-            start_time = time.perf_counter()
-
-            with torch.no_grad():
-              outputs = model(images)
-
-            torch.cuda.synchronize()
-            elapsed_time = time.perf_counter() - start_time
+            images = images.to(device)
             
-            if args.save_image:
-                pred = np.squeeze(outputs.data.max(1)[1].cpu().numpy(), axis=0)
-                save_rgb = True
-                
-                decoded = loader.decode_segmap_id(pred)
-                dir = "./out_predID/"
-                if not os.path.exists(dir):
-                  os.mkdir(dir)
-                misc.imsave(dir+fname[0], decoded)
+            if i == 0:
+                with torch.no_grad():
+                    outputs = model(images)        
+            
+            if args.eval_flip:
+                outputs = model(images)
 
-                if save_rgb:
-                    decoded = loader.decode_segmap(pred)
-                    img_input = np.squeeze(images.cpu().numpy(),axis=0)
-                    img_input = img_input.transpose(1, 2, 0)
-                    blend = img_input * 0.2 + decoded * 0.8
-                    fname_new = fname[0]
-                    fname_new = fname_new[:-4]
-                    fname_new += '.jpg'
-                    dir = "./out_rgb/"
+                # Flip images in numpy (not support in tensor)
+                outputs = outputs.data.cpu().numpy()
+                flipped_images = np.copy(images.data.cpu().numpy()[:, :, :, ::-1])
+                flipped_images = torch.from_numpy(flipped_images).float().to(device)
+                outputs_flipped = model(flipped_images)
+                outputs_flipped = outputs_flipped.data.cpu().numpy()
+                outputs = (outputs + outputs_flipped[:, :, :, ::-1]) / 2.0
+
+                pred = np.argmax(outputs, axis=1)
+            else:
+                torch.cuda.synchronize()
+                start_time = time.perf_counter()
+
+                with torch.no_grad():
+                    outputs = model(images)
+
+                torch.cuda.synchronize()
+                elapsed_time = time.perf_counter() - start_time
+                
+                if args.save_image:
+                    pred = np.squeeze(outputs.data.max(1)[1].cpu().numpy(), axis=0)
+                    save_rgb = True
+                    
+                    decoded = loader.decode_segmap_id(pred)
+                    dir = "./out_predID/"
                     if not os.path.exists(dir):
-                      os.mkdir(dir)
-                    misc.imsave(dir+fname_new, blend)
+                        os.mkdir(dir)
+                        misc.imsave(dir+fname[0], decoded)
 
-                
-            pred = outputs.data.max(1)[1].cpu().numpy()
+                    if save_rgb:
+                        decoded = loader.decode_segmap(pred)
+                        img_input = np.squeeze(images.cpu().numpy(),axis=0)
+                        img_input = img_input.transpose(1, 2, 0)
+                        blend = img_input * 0.2 + decoded * 0.8
+                        fname_new = fname[0]
+                        fname_new = fname_new[:-4]
+                        fname_new += '.jpg'
+                        dir = "./out_rgb/"
+                        if not os.path.exists(dir):
+                            os.mkdir(dir)
+                            misc.imsave(dir+fname_new, blend)
 
-        gt = labels.numpy()
-        s = np.sum(gt==pred) / (1024*2048)
+                    
+                pred = outputs.data.max(1)[1].cpu().numpy()
 
-        if args.measure_time:
-            total_time += elapsed_time
-            print(
-                "Inference time \
-                  (iter {0:5d}): {1:4f}, {2:3.5f} fps".format(
-                    i + 1, s,1 / elapsed_time
+            gt = labels.numpy()
+            s = np.sum(gt==pred) / (1024*2048)
+
+            if args.measure_time:
+                total_time += elapsed_time
+                print(
+                    "Inference time \
+                    (iter {0:5d}): {1:4f}, {2:3.5f} fps".format(
+                        i + 1, s,1 / elapsed_time
+                    )
                 )
-            )
-        
-        running_metrics.update(gt, pred)
-        
+            
+            output_csv.write( '%s, %.4f, %.4f\n' %(fname[0], s, 1 / elapsed_time) )
+
+            running_metrics.update(gt, pred)
 
     score, class_iou = running_metrics.get_scores()
     print("Total Frame Rate = %.2f fps" %(500/total_time ))

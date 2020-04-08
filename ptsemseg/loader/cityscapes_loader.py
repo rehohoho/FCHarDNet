@@ -61,14 +61,6 @@ class cityscapesLoader(data.Dataset):
         version="cityscapes",
         test_mode=False,
     ):
-        """__init__
-
-        :param root:
-        :param split:
-        :param is_transform:
-        :param img_size:
-        :param augmentations
-        """
         self.root = root
         self.split = split
         self.is_transform = is_transform

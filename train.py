@@ -7,6 +7,8 @@ import random
 import argparse
 import numpy as np
 import torch.nn as nn
+from math import log10, floor
+from PIL import Image
 
 from torch.utils import data
 from tqdm import tqdm
@@ -22,11 +24,56 @@ from ptsemseg.optimizers import get_optimizer
 
 from tensorboardX import SummaryWriter
 
+
+def write_images_to_board(loader, i_val, image, gt, pred, step, name):
+    
+    writer_label = loader.decode_segmap(gt)
+    writer_label = writer_label.transpose(2, 0, 1)
+    writer_label = torch.Tensor(writer_label).type('torch.cuda.FloatTensor')
+    
+    writer_pred = loader.decode_segmap(pred)
+    writer_pred = writer_pred.transpose(2, 0, 1)
+    writer_pred = torch.Tensor(writer_pred).type('torch.cuda.FloatTensor')
+
+    writer.add_image('%s_%s_Image' %(name, i_val), image, step)
+    writer.add_image('%s_%s_Label' %(name, i_val), writer_label, step)
+    writer.add_image('%s_%s_Pred' %(name, i_val), writer_pred, step)
+
+
+def get_image_from_tensor(image, mask = False):
+    
+    if mask:
+        image *= 255
+    else:
+        std = np.array([57.375, 57.12 , 58.395])
+        mean = np.array([103.53 , 116.28 , 123.675])
+        image = (image * std + mean)
+    
+    image = Image.fromarray(image.astype(np.uint8))
+    return image
+
+
+def write_images_to_dir(loader, image, gt, pred, step, save_dir, name):
+    
+    writer_label = [loader.decode_segmap(i)
+                            for i in gt]
+    
+    writer_pred = [ loader.decode_segmap(i)
+                            for i in pred]
+    
+    save_path = os.path.join(save_dir, str(step))
+    
+    for i in range(len(image)):
+        get_image_from_tensor(image[i]).save('%s_%s_%d_Image.png' %(save_path, name, i))
+        get_image_from_tensor(writer_label[i], mask=True).save('%s_%s_%d_Label.png' %(save_path, name, i))
+        get_image_from_tensor(writer_pred[i], mask=True).save('%s_%s_%d_Pred.png' %(save_path, name, i))
+
+
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
 
-def train(cfg, writer, logger):
+def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=None):
 
     # Setup seeds
     torch.manual_seed(cfg.get("seed", 1337))
@@ -35,7 +82,10 @@ def train(cfg, writer, logger):
     random.seed(cfg.get("seed", 1337))
 
     # Setup device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if gpu == -1:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cuda:%d" %gpu if torch.cuda.is_available() else "cpu")
 
     # Setup Augmentations
     augmentations = cfg["training"].get("augmentations", None)
@@ -44,6 +94,10 @@ def train(cfg, writer, logger):
     # Setup Dataloader
     data_loader = get_loader(cfg["data"]["dataset"])
     data_path = cfg["data"]["path"]
+    if "version" in cfg["data"]:
+        version = cfg["data"]["version"]
+    else:
+        version = "cityscapes"
 
     t_loader = data_loader(
         data_path,
@@ -51,13 +105,15 @@ def train(cfg, writer, logger):
         split=cfg["data"]["train_split"],
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
         augmentations=data_aug,
+        version=version,
     )
 
     v_loader = data_loader(
         data_path,
         is_transform=True,
         split=cfg["data"]["val_split"],
-        img_size=(1024,2048),
+        img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
+        version=version,
     )
 
     n_classes = t_loader.n_classes
@@ -81,7 +137,11 @@ def train(cfg, writer, logger):
     total_params = sum(p.numel() for p in model.parameters())
     print( 'Parameters:',total_params )
 
-    model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
+    if gpu == -1:
+        model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
+    else:
+        model = torch.nn.DataParallel(model, device_ids=[gpu])
+    
     model.apply(weights_init)
     pretrained_path='weights/hardnet_petite_base.pth'
     weights = torch.load(pretrained_path)
@@ -96,10 +156,11 @@ def train(cfg, writer, logger):
 
     scheduler = get_scheduler(optimizer, cfg["training"]["lr_schedule"])
 
+    if 'weight' in cfg['training']['loss']:
+        cfg['training']['loss']['weight'] = torch.Tensor(cfg['training']['loss']['weight']).to(device)
     loss_fn = get_loss_function(cfg)
     print("Using loss {}".format(loss_fn))
 
-    start_iter = 0
     if cfg["training"]["resume"] is not None:
         if os.path.isfile(cfg["training"]["resume"]):
             logger.info(
@@ -107,9 +168,10 @@ def train(cfg, writer, logger):
             )
             checkpoint = torch.load(cfg["training"]["resume"])
             model.load_state_dict(checkpoint["model_state"])
-            optimizer.load_state_dict(checkpoint["optimizer_state"])
-            scheduler.load_state_dict(checkpoint["scheduler_state"])
-            start_iter = checkpoint["epoch"]
+            if not model_only:
+                optimizer.load_state_dict(checkpoint["optimizer_state"])
+                scheduler.load_state_dict(checkpoint["scheduler_state"])
+                start_iter = checkpoint["epoch"]
             logger.info(
                 "Loaded checkpoint '{}' (iter {})".format(
                     cfg["training"]["resume"], checkpoint["epoch"]
@@ -134,7 +196,11 @@ def train(cfg, writer, logger):
     flag = True
     loss_all = 0
     loss_n = 0
+    max_n_images = 10
+    max_n_batches = 1
+
     while i <= cfg["training"]["train_iters"] and flag:
+        i_train = 0
         for (images, labels, _) in trainloader:
             i += 1
             start_ts = time.time()
@@ -145,6 +211,16 @@ def train(cfg, writer, logger):
 
             optimizer.zero_grad()
             outputs = model(images)
+
+            # log images, labels, outputs
+            if save_dir is not None and i_train <= max_n_images:
+                pred = outputs.data.max(1)[1].cpu().numpy()
+                gt = labels.data.cpu().numpy()
+                write_images_to_board(t_loader, i_train, images[0], gt[0], pred[0], i, 'train')
+
+                if i_train <= max_n_batches:
+                    images = images.data.cpu().numpy().transpose(0, 2, 3, 1)
+                    write_images_to_dir(t_loader, images, gt, pred, i, save_dir, name='train')
 
             loss = loss_fn(input=outputs, target=labels)
             loss.backward()
@@ -192,7 +268,15 @@ def train(cfg, writer, logger):
                         running_metrics_val.update(gt, pred)
                         val_loss_meter.update(val_loss.item())
 
+                        # log validation images
+                        if save_dir is not None and i_val <= max_n_images:
+                            write_images_to_board(v_loader, i_val, images_val[0], gt[0], pred[0], i, 'validation')
+                            if i_val <= max_n_batches:
+                                images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)
+                                write_images_to_dir(v_loader, images_val, gt, pred, i, save_dir, name='validation')
+
                 writer.add_scalar("loss/val_loss", val_loss_meter.avg, i + 1)
+
                 logger.info("Iter %d Val Loss: %.4f" % (i + 1, val_loss_meter.avg))
 
                 score, class_iou = running_metrics_val.get_scores()
@@ -245,8 +329,32 @@ if __name__ == "__main__":
         "--config",
         nargs="?",
         type=str,
-        default="configs/hardnet.yml",
+        default="configs/scooter.yml",
         help="Configuration file to use",
+    )
+    parser.add_argument(
+        "--model_only",
+        default=False,
+        action='store_true',
+        help="load model weights in checkpoint only, no optimizer, scheduler and epoch",
+    )
+    parser.add_argument(
+        "--start_iter",
+        default=0,
+        type=int,
+        help="fix starting iteration if loading model_only",
+    )
+    parser.add_argument(
+        "--gpu",
+        default=-1,
+        type=int,
+        help="specify which gpu to use",
+    )
+    parser.add_argument(
+        "--save_images_locally",
+        default=False,
+        action='store_true',
+        help="flag to save images locally",
     )
 
     args = parser.parse_args()
@@ -264,4 +372,12 @@ if __name__ == "__main__":
     logger = get_logger(logdir)
     logger.info("Let the games begin")
 
-    train(cfg, writer, logger)
+    if args.save_images_locally:
+        save_dir = os.path.join(logdir, 'image_logs')
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+    else:
+        save_dir = None
+        print('No save directory specified to log images locally.')
+
+    train(cfg, writer, logger, args.start_iter, args.model_only, gpu = args.gpu, save_dir = save_dir)
