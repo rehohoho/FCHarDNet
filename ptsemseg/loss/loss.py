@@ -108,7 +108,9 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
         )
 
         # ignore mask is repeated to fit shape of hard_input / target
-        soft_target_loss = torch.nn.KLDivLoss()(soft_input*ignore_mask, soft_target*ignore_mask)
+        soft_target_loss = F.kl_div(
+            soft_input*ignore_mask, soft_target*ignore_mask, reduce = True, reduction='mean'
+        )
         
         return hard_target_loss, soft_target_loss
 
@@ -122,7 +124,7 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
             soft_target=torch.unsqueeze(soft_target[i], 0),
             ignore_mask=ignore_mask[i]
         )
-        soft_target_loss *= 10 * temperature * temperature
+        soft_target_loss *= 10
         loss += hard_target_loss + soft_target_loss
         
     return loss / float(batch_size)
