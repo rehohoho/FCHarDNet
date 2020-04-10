@@ -187,7 +187,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                 "Loading model and optimizer from checkpoint '{}'".format(cfg["training"]["resume"])
             )
             checkpoint = torch.load(cfg["training"]["resume"])
-            model.load_state_dict(checkpoint["model_state"])
+            model.load_state_dict(checkpoint["model_state"], strict=False)
             if not model_only:
                 optimizer.load_state_dict(checkpoint["optimizer_state"])
                 scheduler.load_state_dict(checkpoint["scheduler_state"])

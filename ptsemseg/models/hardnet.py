@@ -41,6 +41,37 @@ class ConvLayer(nn.Sequential):
         return super().forward(x)
         
 
+class JunctionHead(nn.Module):
+
+    def __init__(self, params):
+        super().__init__()
+        assert 'neurons' in params and 'dropouts' in params and len(params['neurons']) == len(params['dropouts'])
+
+        neurons = [20480] + params['neurons'] + [1] # add flattened feature size and final output size
+        dropouts = params['dropouts'] + [0.0]
+        n_layers = len(neurons)
+        self.layers = nn.ModuleList([])
+
+        for layer in range(n_layers - 1):
+            self.layers.append( nn.Linear(neurons[layer], neurons[layer+1]) )
+            self.layers.append( nn.Dropout2d(p = dropouts[layer]) )
+            
+            if layer != n_layers - 2:
+                self.layers.append( nn.ReLU(inplace = True) )
+
+        print('\nUsing Junction head:')
+        for layer in self.layers:
+            print('    %s' %layer)
+
+    def forward(self, x):
+        
+        out = x.view(x.size(0), -1) # flatten downsampled feature block
+
+        for layer in range(len(self.layers)):
+            out = self.layers[layer](out)
+        
+        return out
+
 
 class HarDBlock(nn.Module):
     """ 3x3conv - bn - relu layers with harmonic links (k-2**i) """
@@ -91,7 +122,6 @@ class HarDBlock(nn.Module):
         #print("Blk out =",self.out_channels)
         self.layers = nn.ModuleList(layers_)
 
-
     def forward(self, x):
         layers_ = [x]                   # outputs from each layer, will be appended further
         for layer in range(len(self.layers)):
@@ -118,7 +148,6 @@ class HarDBlock(nn.Module):
         return out
 
 
-
 class TransitionUp(nn.Module):
     """ interpolate input to skip size, concat with skip (skip is downsampling hardblock output) """
 
@@ -138,9 +167,10 @@ class TransitionUp(nn.Module):
           
         return out
 
+
 class hardnet(nn.Module):
 
-    def __init__(self, n_classes=19):
+    def __init__(self, n_classes=19, junction=None):
         super(hardnet, self).__init__()
 
         first_ch  = [16,24,32,48]           # downsampling conv channels
@@ -211,8 +241,11 @@ class hardnet(nn.Module):
                out_channels=n_classes, kernel_size=1, stride=1,
                padding=0, bias=True)
                
+        if junction is not None:
+            self.junction = JunctionHead(params = junction)
 
     def forward(self, x):
+        """ calls all the module lists in correct order """
         
         skip_connections = []
         size_in = x.size()
@@ -222,6 +255,8 @@ class hardnet(nn.Module):
             if i in self.shortcut_layers:   # record outputs from skip layers
                 skip_connections.append(x)
         out = x
+        
+        junction = self.junction(out)
         
         for i in range(self.n_blocks):
             skip = skip_connections.pop()   # get output from skip layers
