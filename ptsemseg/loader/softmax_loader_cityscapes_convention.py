@@ -7,11 +7,15 @@ from PIL import Image
 from torch.utils import data
 
 from ptsemseg.loader.label_handler.label_handler import label_handler
-from ptsemseg.augmentations import Compose, RandomHorizontallyFlip, RandomRotate, Scale
+import imgaug.augmenters as iaa
+from imgaug.augmentables.heatmaps import HeatmapsOnImage
 
 
-class BaseLoaderCityscapesConvention(data.Dataset):
-    
+class SoftmaxLoaderCityscapesConvention(data.Dataset):
+    """
+    Requires dataset to have subdirectories: *images and *seg and *softmax_temp
+    """
+
     colors = [
         [128, 64, 128],
         [244, 35, 232],
@@ -89,12 +93,15 @@ class BaseLoaderCityscapesConvention(data.Dataset):
                 os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
 
         self.ignore_index = 250
-        self.label_handler = label_handler(self.ignore_index)
-
+        
         if not self.files[split]:
             raise Exception("No files for split=[%s] found in %s" % (split, self.root))
 
         print("Found %d %s images" % (len(self.files[split]), split))
+
+        self.softmax_resize_seq = iaa.Sequential([ 
+            iaa.Resize({"height": img_size[0], "width": img_size[1]})
+        ])
 
     def __len__(self):
         """__len__"""
@@ -106,57 +113,48 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         :param index:
         """
         img_path = self.files[self.split][index].rstrip()
+        lbl_path = img_path.replace('images', 'seg')
+        lbl_temp_path = img_path.replace('images', 'softmax_temp')
         dataset_type = img_path.split(self.root)[-1].split(os.sep)[0]
-        
+
         if dataset_type == 'mapillary':
-            lbl_path = img_path.replace('images', 'seg').replace('.jpg', '.png')
+            lbl_path = lbl_path.replace('.jpg', '.png')
+            lbl_temp_path = lbl_temp_path.replace('.jpg', '.npy')
         elif dataset_type == 'bdd100k':
-            lbl_path = img_path.replace('images','label').replace('.jpg', '_train_id.png')
+            lbl_path = lbl_path.replace('.jpg', '_train_id.png')
+            lbl_temp_path = lbl_temp_path.replace('.jpg', '_train_id.npy')
         elif dataset_type == 'cityscapes':
-            lbl_path = img_path.replace('images','seg').replace('_leftImg8bit.png','_gtFine_labelIds.png')
+            lbl_path = lbl_path.replace('_leftImg8bit.png','_gtFine_labelIds.png')
+            lbl_temp_path = lbl_temp_path.replace('_leftImg8bit.png','_gtFine_labelIds.npy')
         elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled':
-            lbl_path = img_path.replace('images','seg')
-        
+            lbl_temp_path = lbl_temp_path.replace('.png', '.npy')
+            
         name = img_path.split(os.sep)[-2:]
         name = os.path.join(name[0], name[1])
 
-        img = Image.open(img_path)
-        img = np.array(img, dtype=np.uint8)
-
+        img = np.array(Image.open(img_path), dtype=np.uint8) #np.ndarray of (HWC)
         lbl = Image.open(lbl_path)
         lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8), dataset_type)
-        
+        lbl_temp = np.load(lbl_temp_path).astype(np.float32).transpose(1,2,0) #np.ndarray of (HWC)
+
         if self.augmentations is not None:
-            img, lbl = self.augmentations(img, lbl)
+            img, lbl, lbl_temp = self.augmentations(img, lbl, lbl_temp)
 
         if self.is_transform:
-            img, lbl = self.transform(img, lbl, index)
+            img, lbl, lbl_temp = self.transform(img, lbl, lbl_temp, index) # normalisation, transposing, convert to tensor
 
+        return img, (lbl, lbl_temp), name
 
-        return img, lbl, name
+    def transform(self, img, lbl, lbl_temp, index):
+        """ perform standardisation and resizing """
 
-    def transform(self, img, lbl, index):
-        """transform
-
-        :param img:
-        :param lbl:
-        """
         img = np.array(Image.fromarray(img).resize(
                 (self.img_size[1], self.img_size[0])))  # uint8 with RGB mode
         img = img[:, :, ::-1]  # RGB -> BGR
         img = img.astype(np.float64)
-
-        value_scale = 255
-        mean = [0.406, 0.456, 0.485]
-        mean = [item * value_scale for item in mean]
-        std = [0.225, 0.224, 0.229]
-        std = [item * value_scale for item in std]
-
         if self.img_norm:
-            img = (img - mean) / std
-
-        # NHWC -> NCHW
-        img = img.transpose(2, 0, 1)
+            img = (img - [103.53, 116.28, 123.675]) / [57.375, 57.120000000000005, 58.395]
+        img = img.transpose(2, 0, 1) # NHWC -> NCHW
 
         classes = np.unique(lbl)
         lbl = lbl.astype(float)
@@ -172,10 +170,44 @@ class BaseLoaderCityscapesConvention(data.Dataset):
             print(self.n_classes, index)
             raise ValueError("Segmentation map contained invalid class values")
 
+        lbl_temp = HeatmapsOnImage(lbl_temp, shape = lbl_temp.shape)
+        lbl_temp = self.softmax_resize_seq(heatmaps = lbl_temp).get_arr()
+        lbl_temp = lbl_temp.transpose(2, 0, 1)
+
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
+        lbl_temp = torch.from_numpy(lbl_temp).float()
 
-        return img, lbl
+        return img, lbl, lbl_temp
+    
+    def extract_ignore_mask(self, image):
+        """ Retrieve loss weights to zero padded portions of image/predictions 
+        weight is repeated to fit shape of input / target in BCELoss
+        
+        Args:   image           NCHW tensor
+        Return: ignore_mask     NHW tensor
+        """
+        
+        padded_single_channel = torch.sum(image, dim=1)
+        
+        ignore_mask = torch.where(
+            padded_single_channel == 0,
+            padded_single_channel,
+            torch.ones_like(padded_single_channel)
+        )
+        
+        return ignore_mask
+
+    def encode_segmap(self, mask, dataset_type):
+        # Put all void classes to zero
+        if dataset_type == 'cityscapes':
+            mask = self.label_handler.label_cityscapes(mask)
+        if dataset_type == 'mapillary':
+            mask = self.label_handler.label_mapillary(mask)
+        if dataset_type == 'bdd100k':
+            mask[mask==255] = self.ignore_index
+        
+        return mask
 
     # used for logging or testing in __main__ only, fixed to cityscapes convention
     def decode_segmap(self, temp):
@@ -196,26 +228,18 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         rgb[:, :, 1] = g / 255.0
         rgb[:, :, 2] = b / 255.0
         return rgb
-
-    # used in validation only in saving images, to convert back to test labels
+    
+    # used in validation only in saving images
     def decode_segmap_id(self, temp):
-        return temp
-
-    def encode_segmap(self, mask, dataset_type):
-        # Put all void classes to zero
-        if dataset_type == 'cityscapes':
-            mask = self.label_handler.label_cityscapes(mask)
-        if dataset_type == 'mapillary':
-            mask = self.label_handler.label_mapillary(mask)
-        if dataset_type == 'bdd100k':
-            mask[mask==255] = self.ignore_index
-        
-        return mask
+        ids = np.zeros((temp.shape[0], temp.shape[1]),dtype=np.uint8)
+        for l in range(0, self.n_classes):
+            ids[temp == l] = self.valid_classes[l]
+        return ids
 
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-
+    
     augmentations = Compose([Scale(2048), RandomRotate(10), RandomHorizontallyFlip(0.5)])
 
     local_path = '/home/whizz/Desktop/deeplabv3/datasets/'

@@ -1,5 +1,6 @@
 runs/
-
+out_predID/
+out_rgb/
 *.pyc
 *.so
 *.pyd
