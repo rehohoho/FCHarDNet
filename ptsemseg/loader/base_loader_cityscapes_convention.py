@@ -41,20 +41,52 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         "cityscapes": [0.0, 0.0, 0.0],
     }  # pascal mean for PSPNet and ICNet pre-trained model
 
+    def _init_get_files(self, datasets):
+        self.files[self.split] = []
+
+        if 'cityscapes' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'cityscapes/*images', self.split, '**/*leftImg8bit.png')) ]
+        if 'scooter' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter/*images', self.split, '**/*.png')) ]
+        if 'scooter_small' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter_small/*images', self.split, '**/*.png')) ]
+        if 'scooter_halflabelled' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter_halflabelled/*images', self.split, '**/*.png')) ]
+        if 'mapillary' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'mapillary/*images', self.split, '*.jpg')) ]
+        if 'bdd100k' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
+        if 'detector' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'detector/*images', self.split, '**/*.png'), recursive=True) ]
+        
     def __init__(
         self,
         root,
+        config,
         split="train",
         is_transform=False,
         img_size=(1024, 2048),
         augmentations=None,
         img_norm=True,
-        version="cityscapes",
         test_mode=False,
     ):
         self.root = root
         self.split = split
 
+        self.detector_heads = False
+        if 'detector_heads' in config:
+            self.detector_heads = True
+            self.detector_label = []
+            for detector, label in config['detector_heads'].items():                
+                self.detector_label.append( label )
+        
         self.is_transform = is_transform
         self.augmentations = augmentations
         self.img_norm = img_norm
@@ -64,37 +96,17 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         self.mean = np.array(self.mean_rgb["cityscapes"])
         self.files = {}
 
-        datasets = version.replace(' ', '').split(',')
+        assert 'version' in config
+        datasets = config['version'].replace(' ', '').split(',')
         print('Datasets used:', datasets)
         
-        self.files[split] = []
-
-        if 'cityscapes' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'cityscapes/*images', self.split, '**/*leftImg8bit.png')) ]
-        if 'scooter' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter/*images', self.split, '**/*.png')) ]
-        if 'scooter_small' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_small/*images', self.split, '**/*.png')) ]
-        if 'scooter_halflabelled' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_halflabelled/*images', self.split, '**/*.png')) ]
-        if 'mapillary' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'mapillary/*images', self.split, '*.jpg')) ]
-        if 'bdd100k' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
-
-        self.ignore_index = 250
-        self.label_handler = label_handler(self.ignore_index)
-
+        self._init_get_files(datasets)
         if not self.files[split]:
             raise Exception("No files for split=[%s] found in %s" % (split, self.root))
-
         print("Found %d %s images" % (len(self.files[split]), split))
+
+        self.ignore_index = 250
+        # self.label_handler = label_handler(self.ignore_index)
 
     def __len__(self):
         """__len__"""
@@ -114,7 +126,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
             lbl_path = img_path.replace('images','label').replace('.jpg', '_train_id.png')
         elif dataset_type == 'cityscapes':
             lbl_path = img_path.replace('images','seg').replace('_leftImg8bit.png','_gtFine_labelIds.png')
-        elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled':
+        elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled' or 'detector':
             lbl_path = img_path.replace('images','seg')
         
         name = img_path.split(os.sep)[-2:]
@@ -132,6 +144,15 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         if self.is_transform:
             img, lbl = self.transform(img, lbl, index)
 
+        if self.detector_heads:
+            lbl_head = []
+            for pos_label in self.detector_label:
+                if any(label in img_path for label in pos_label):
+                    lbl_head.append(1.0)
+                else:
+                    lbl_head.append(-1.0)
+            lbl_head = torch.from_numpy(np.array(lbl_head))
+            lbl = (lbl, lbl_head)
 
         return img, lbl, name
 

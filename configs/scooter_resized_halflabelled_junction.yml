@@ -1,21 +1,37 @@
 model:
     arch: hardnet
-    junction:
-        neurons: [512]
-        dropouts: [0.5]
+    freeze: ['hardnet']
+    detector_heads:
+        bus_stop:
+            neurons: [512]
+            dropouts: [0.5]
+        junction:
+            neurons: [512]
+            dropouts: [0.5]
+        road_break:
+            neurons: [512]
+            dropouts: [0.5]
+        straight_pavement:
+            neurons: [512]
+            dropouts: [0.5]
 data:
     dataset: base_cityscapes_convention
-    version: scooter_halflabelled
+    version: detector
     train_split: train
     val_split: val
     img_rows: 513
     img_cols: 513
     path: D:/data/
     sbd_path: /mnt/ssd2/Cityscapes/
+    detector_heads:
+        bus_stop: ['bus_stop']
+        junction: ['junction']
+        road_break: ['road_break']
+        straight_pavement: ['straight_pavement']
 training:
     train_iters: 180000
-    batch_size: 1
-    val_interval: 100
+    batch_size: 2
+    val_interval: 1000
     n_workers: 1
     print_interval: 10
     augmentations:
@@ -31,8 +47,11 @@ training:
         min_K: 4096
         loss_th: 0.3
         size_average: True
+    detector_loss:
+        name: 'l1'
+        weight: [1.0, 1.0, 1.0, 1.0]
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 180000
-    resume: D:/Documents/fchardnet/weights/hardnet70_cityscapes_model.pkl
+    resume: D:/models/scooter_resized_halflabelled_180.pkl
     finetune: None    
