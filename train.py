@@ -84,6 +84,34 @@ def write_images_to_dir(loader, image, gt, pred, step, save_dir, name, softmax_g
             get_image_from_tensor(writer_softmax[i], mask=True).save('%s_%s_%d_Softmax.png' %(save_path, name, i))
 
 
+def compute_loss(loss_fn, mode, images, labels, outputs, device, t_loader):
+    """ compute loss based on mode of operation (default, softmax, detector) """
+
+    softmax = None
+    if mode == 'softmax':
+        softmax = labels[1].to(device)
+        labels = labels[0].to(device)
+    elif mode == 'detector':
+        labels_detector = labels[1].to(device)
+        labels = labels[0].to(device)
+        outputs_detector = outputs[1]
+        outputs = outputs[0]
+    else:
+        labels = labels.to(device)
+
+    if mode == 'softmax':
+        ignore_mask = t_loader.extract_ignore_mask(images)
+        loss = loss_fn(input=outputs, hard_target=labels, soft_target=softmax, ignore_mask=ignore_mask)
+    elif mode == 'detector':
+        loss = loss_fn[0](input=outputs, target=labels)
+        loss_head = loss_fn[1](input=outputs_detector, target=labels_detector)
+        print(loss, loss_head)
+        loss = loss + loss_head
+    else:
+        loss = loss_fn(input=outputs, target=labels)
+
+    return outputs, labels, softmax, loss
+
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
@@ -96,7 +124,11 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     np.random.seed(cfg.get("seed", 1337))
     random.seed(cfg.get("seed", 1337))
     
-    use_softmax_labels = cfg["data"]["dataset"] == "softmax_cityscapes_convention"
+    mode = 'default'
+    if cfg["data"]["dataset"] == "softmax_cityscapes_convention":
+        mode == 'softmax'
+    if "detector_heads" in cfg["model"]:
+        mode = 'detector'
 
     # Setup device
     if gpu == -1:
@@ -106,7 +138,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
     # Setup Augmentations
     augmentations = cfg["training"].get("augmentations", None)
-    if use_softmax_labels:
+    if mode == 'softmax':
         data_aug = get_composed_augmentations_softmax(augmentations)
     else:
         data_aug = get_composed_augmentations(augmentations)
@@ -121,19 +153,19 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
     t_loader = data_loader(
         data_path,
+        config = cfg["data"],
         is_transform=True,
         split=cfg["data"]["train_split"],
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
         augmentations=data_aug,
-        version=version,
     )
 
     v_loader = data_loader(
         data_path,
+        config = cfg["data"],
         is_transform=True,
         split=cfg["data"]["val_split"],
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
-        version=version,
     )
 
     n_classes = t_loader.n_classes
@@ -178,7 +210,8 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
     if 'weight' in cfg['training']['loss']:
         cfg['training']['loss']['weight'] = torch.Tensor(cfg['training']['loss']['weight']).to(device)
-    loss_fn = get_loss_function(cfg)
+    
+    loss_fn = get_loss_function(cfg, device)
     print("Using loss {}".format(loss_fn))
 
     if cfg["training"]["resume"] is not None:
@@ -224,39 +257,29 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
             scheduler.step()
             model.train()
 
-            if use_softmax_labels:
-                softmax = labels[1].to(device)  #n,19,513,513
-                labels = labels[0]
-
-            images = images.to(device)  #n,3,513,513
-            labels = labels.to(device)  #n,513,513
-
+            images = images.to(device)
             optimizer.zero_grad()
-            outputs = model(images)     #n,19,513,513
+            outputs = model(images)
+
+            outputs, labels, softmax, loss = compute_loss(  # considers mode of operation
+                loss_fn, mode, images, labels, outputs, device, t_loader
+            )
+            
+            loss.backward()
+            optimizer.step()
+            c_lr = scheduler.get_lr()
 
             if i%1000 == 0:             # log images, labels, outputs
                 pred_array = outputs.data.max(1)[1].cpu().numpy()
                 gt_array = labels.data.cpu().numpy()
                 softmax_gt_array = None
-                
-                if use_softmax_labels:
+                if mode == 'softmax':
                     softmax_gt_array = softmax.data.max(1)[1].cpu().numpy()
-                
                 write_images_to_board(t_loader, images, gt_array, pred_array, i, name = 'train', softmax_gt = softmax_gt_array)
 
                 if save_dir is not None:
                     image_array = images.data.cpu().numpy().transpose(0, 2, 3, 1)
                     write_images_to_dir(t_loader, image_array, gt_array, pred_array, i, save_dir, name = 'train', softmax_gt = softmax_gt_array)
-
-            if use_softmax_labels: # has to be done outside loss function where image is not passed in
-                ignore_mask = t_loader.extract_ignore_mask(images)
-                loss = loss_fn(input=outputs, hard_target=labels, soft_target=softmax, ignore_mask=ignore_mask)
-            else:
-                loss = loss_fn(input=outputs, target=labels)
-
-            loss.backward()
-            optimizer.step()
-            c_lr = scheduler.get_lr()
 
             time_meter.update(time.time() - start_ts)
             loss_all += loss.item()
@@ -286,21 +309,13 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                 loss_n = 0
                 with torch.no_grad():
                     for i_val, (images_val, labels_val, _) in tqdm(enumerate(valloader)):
-                        images_val = images_val.to(device)
                         
-                        # softmax layer does not need to be logged or considered in metrics calculation
-                        if use_softmax_labels:
-                            softmax_val = labels_val[1].to(device)
-                            labels_val = labels_val[0]
-                            
-                        labels_val = labels_val.to(device)
-
+                        images_val = images_val.to(device)
                         outputs = model(images_val)
-                        if use_softmax_labels:
-                            ignore_mask_val = t_loader.extract_ignore_mask(images_val)
-                            val_loss = loss_fn(input=outputs, hard_target=labels_val, soft_target=softmax_val, ignore_mask=ignore_mask_val)
-                        else:
-                            val_loss = loss_fn(input=outputs, target=labels_val)
+                        
+                        outputs, labels_val, softmax_val, val_loss = compute_loss(
+                            loss_fn, mode, images_val, labels_val, outputs, device, t_loader
+                        )
 
                         pred_array = outputs.data.max(1)[1].cpu().numpy()
                         gt_array = labels_val.data.cpu().numpy()
@@ -309,7 +324,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                         val_loss_meter.update(val_loss.item())
 
                 softmax_gt_array = None # log validation images
-                if use_softmax_labels:
+                if mode == 'softmax':
                     softmax_gt_array = softmax_val.data.max(1)[1].cpu().numpy()
                 write_images_to_board(v_loader, images_val, gt_array, pred_array, i, 'validation', softmax_gt = softmax_gt_array)
                 if save_dir is not None:
