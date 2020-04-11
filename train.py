@@ -249,7 +249,8 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                     write_images_to_dir(t_loader, image_array, gt_array, pred_array, i, save_dir, name = 'train', softmax_gt = softmax_gt_array)
 
             if use_softmax_labels: # has to be done outside loss function where image is not passed in
-                loss = loss_fn(input=outputs, target=(labels, softmax), weight=t_loader.extract_ignore_mask(images))
+                ignore_mask = t_loader.extract_ignore_mask(images)
+                loss = loss_fn(input=outputs, hard_target=labels, soft_target=softmax, ignore_mask=ignore_mask)
             else:
                 loss = loss_fn(input=outputs, target=labels)
 
@@ -289,12 +290,17 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                         
                         # softmax layer does not need to be logged or considered in metrics calculation
                         if use_softmax_labels:
-                            labels_val = labels[0]
+                            softmax_val = labels_val[1].to(device)
+                            labels_val = labels_val[0]
                             
                         labels_val = labels_val.to(device)
 
                         outputs = model(images_val)
-                        val_loss = loss_fn(input=outputs, target=labels_val)
+                        if use_softmax_labels:
+                            ignore_mask_val = t_loader.extract_ignore_mask(images_val)
+                            val_loss = loss_fn(input=outputs, hard_target=labels_val, soft_target=softmax_val, ignore_mask=ignore_mask_val)
+                        else:
+                            val_loss = loss_fn(input=outputs, target=labels_val)
 
                         pred_array = outputs.data.max(1)[1].cpu().numpy()
                         gt_array = labels_val.data.cpu().numpy()
@@ -302,12 +308,13 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                         running_metrics_val.update(gt_array, pred_array)
                         val_loss_meter.update(val_loss.item())
 
-                        # log validation images
-                        if save_dir is not None and i_val <= max_n_images:
-                            write_images_to_board(v_loader, i_val, images_val[0], gt_array[0], pred_array[0], i, 'validation')
-                            if i_val <= max_n_batches:
-                                images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)
-                                write_images_to_dir(v_loader, images_val, gt_array, pred_array, i, save_dir, name='validation')
+                softmax_gt_array = None # log validation images
+                if use_softmax_labels:
+                    softmax_gt_array = softmax_val.data.max(1)[1].cpu().numpy()
+                write_images_to_board(v_loader, images_val, gt_array, pred_array, i, 'validation', softmax_gt = softmax_gt_array)
+                if save_dir is not None:
+                    images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)
+                    write_images_to_dir(v_loader, images_val, gt_array, pred_array, i, save_dir, name='validation', softmax_gt = softmax_gt_array)
 
                 writer.add_scalar("loss/val_loss", val_loss_meter.avg, i + 1)
 

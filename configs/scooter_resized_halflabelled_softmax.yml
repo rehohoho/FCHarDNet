@@ -2,7 +2,7 @@ model:
     arch: hardnet
 data:
     dataset: softmax_cityscapes_convention
-    version: scooter_small
+    version: scooter_halflabelled
     train_split: train
     val_split: val
     img_rows: 513
@@ -12,7 +12,7 @@ data:
 training:
     train_iters: 180000
     batch_size: 1
-    val_interval: 100
+    val_interval: 20
     n_workers: 1
     print_interval: 10
     augmentations:
@@ -24,7 +24,8 @@ training:
         weight_decay: 0.0005
         momentum: 0.9
     loss:
-        name: 'bootstrapped_binary_cross_entropy'
+        name: 'soft_and_hard_target_cross_entropy'
+        temperature: 10
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 180000
