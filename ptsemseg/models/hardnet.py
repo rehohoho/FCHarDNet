@@ -41,7 +41,7 @@ class ConvLayer(nn.Sequential):
         return super().forward(x)
         
 
-class JunctionHead(nn.Module):
+class DetectorHead(nn.Module):
 
     def __init__(self, params):
         super().__init__()
@@ -59,10 +59,6 @@ class JunctionHead(nn.Module):
             if layer != n_layers - 2:
                 self.layers.append( nn.ReLU(inplace = True) )
 
-        print('\nUsing Junction head:')
-        for layer in self.layers:
-            print('    %s' %layer)
-
     def forward(self, x):
         
         out = x.view(x.size(0), -1) # flatten downsampled feature block
@@ -70,7 +66,7 @@ class JunctionHead(nn.Module):
         for layer in range(len(self.layers)):
             out = self.layers[layer](out)
         
-        return out
+        return torch.squeeze(out, dim = -1)
 
 
 class HarDBlock(nn.Module):
@@ -170,7 +166,32 @@ class TransitionUp(nn.Module):
 
 class hardnet(nn.Module):
 
-    def __init__(self, n_classes=19, junction=None):
+    def _freeze_layers(self, freeze):
+        
+        modules_to_freeze = []
+        if 'hardnet' in freeze:
+            modules_to_freeze += [self.base, self.transUpBlocks, self.conv1x1_up, self.denseBlocksUp, self.finalConv]
+        if 'detectors' in freeze:
+            modules_to_freeze += [self.detector]
+        
+        for module in modules_to_freeze:
+            if isinstance(module, nn.ModuleList):
+                for child in module.children():
+                    for param in child.parameters():
+                        param.requires_grad = False
+            else:
+                for param in module.parameters():
+                    param.requires_grad = False
+        
+        n_frozen = 0
+        n_not_frozen = 0
+        for param in self.parameters():
+            n_not_frozen += param.requires_grad
+            n_frozen += param.requires_grad == False
+        
+        print('Number of frozen layers: %d, Number of active layers: %d' %(n_frozen, n_not_frozen))
+
+    def __init__(self, n_classes=19, detector_heads=None, freeze = []):
         super(hardnet, self).__init__()
 
         first_ch  = [16,24,32,48]           # downsampling conv channels
@@ -241,8 +262,13 @@ class hardnet(nn.Module):
                out_channels=n_classes, kernel_size=1, stride=1,
                padding=0, bias=True)
                
-        if junction is not None:
-            self.junction = JunctionHead(params = junction)
+        self.detector = None
+        if detector_heads is not None:
+            self.detector = nn.ModuleList([])
+            for detector, params in detector_heads.items():
+                self.detector.append( DetectorHead(params = params) )
+        
+        self._freeze_layers(freeze)
 
     def forward(self, x):
         """ calls all the module lists in correct order """
@@ -255,8 +281,12 @@ class hardnet(nn.Module):
             if i in self.shortcut_layers:   # record outputs from skip layers
                 skip_connections.append(x)
         out = x
-        
-        junction = self.junction(out)
+
+        if self.detector is not None:
+            detector_out = []
+            for i in range(len(self.detector)):
+                detector_out.append( self.detector[i](out) )        
+            detector_out = torch.stack(detector_out, dim = 0).t()
         
         for i in range(self.n_blocks):
             skip = skip_connections.pop()   # get output from skip layers
@@ -271,8 +301,7 @@ class hardnet(nn.Module):
                             size=(size_in[2], size_in[3]),
                             mode="bilinear",
                             align_corners=True)
+        
+        if self.detector is not None:
+            out = (out, detector_out)
         return out
-
-
-
-
