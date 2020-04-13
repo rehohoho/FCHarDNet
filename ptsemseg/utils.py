@@ -5,7 +5,7 @@ import os
 import logging
 import datetime
 import numpy as np
-
+from PIL import Image
 from collections import OrderedDict
 
 
@@ -56,3 +56,23 @@ def get_logger(logdir):
     logger.addHandler(hdlr)
     logger.setLevel(logging.INFO)
     return logger
+
+
+def get_cityscapes_image_from_tensor(image, mask = False):
+    """
+    Reverse image transformation
+        - normalisation for image
+        - /=255 for mask
+
+        :param image is a np.array
+    """
+    if mask:
+        image *= 255
+    else:
+        std = np.array([57.375, 57.12 , 58.395])
+        mean = np.array([103.53 , 116.28 , 123.675])
+        image = (image * std + mean)
+    
+    image = Image.fromarray(image.astype(np.uint8))
+    
+    return image
