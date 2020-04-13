@@ -7,6 +7,7 @@ from ptsemseg.loader.mit_sceneparsing_benchmark_loader import MITSceneParsingBen
 from ptsemseg.loader.cityscapes_loader import cityscapesLoader
 from ptsemseg.loader.base_loader_cityscapes_convention import BaseLoaderCityscapesConvention
 from ptsemseg.loader.softmax_loader_cityscapes_convention import SoftmaxLoaderCityscapesConvention
+from ptsemseg.loader.softmax_loader_direct_load import SoftmaxLoaderDirectLoad
 from ptsemseg.loader.nyuv2_loader import NYUv2Loader
 from ptsemseg.loader.sunrgbd_loader import SUNRGBDLoader
 from ptsemseg.loader.mapillary_vistas_loader import mapillaryVistasLoader
@@ -25,6 +26,7 @@ def get_loader(name):
         "cityscapes": cityscapesLoader,
         "base_cityscapes_convention": BaseLoaderCityscapesConvention,
         "softmax_cityscapes_convention": SoftmaxLoaderCityscapesConvention,
+        "softmax_direct_load": SoftmaxLoaderDirectLoad,
         "nyuv2": NYUv2Loader,
         "sunrgbd": SUNRGBDLoader,
         "vistas": mapillaryVistasLoader,

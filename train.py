@@ -16,7 +16,7 @@ from tqdm import tqdm
 from ptsemseg.models import get_model
 from ptsemseg.loss import get_loss_function
 from ptsemseg.loader import get_loader
-from ptsemseg.utils import get_logger
+from ptsemseg.utils import get_logger, get_cityscapes_image_from_tensor
 from ptsemseg.metrics import runningScore, averageMeter
 from ptsemseg.augmentations import get_composed_augmentations, get_composed_augmentations_softmax
 from ptsemseg.schedulers import get_scheduler
@@ -52,19 +52,6 @@ def write_images_to_board(loader, image, gt, pred, step, name, softmax_gt = None
         writer.add_image('%s_%s_Softmax' %(name, i), vis_softmax, step)
 
 
-def get_image_from_tensor(image, mask = False):
-    
-    if mask:
-        image *= 255
-    else:
-        std = np.array([57.375, 57.12 , 58.395])
-        mean = np.array([103.53 , 116.28 , 123.675])
-        image = (image * std + mean)
-    
-    image = Image.fromarray(image.astype(np.uint8))
-    return image
-
-
 def write_images_to_dir(loader, image, gt, pred, step, save_dir, name, softmax_gt = None):
     
     writer_label = [loader.decode_segmap(i) for i in gt]
@@ -76,12 +63,12 @@ def write_images_to_dir(loader, image, gt, pred, step, save_dir, name, softmax_g
     batch_size = min(image.shape[0], 20)
 
     for i in range(batch_size):
-        get_image_from_tensor(image[i]).save('%s_%s_%d_Image.png' %(save_path, name, i))
-        get_image_from_tensor(writer_label[i], mask=True).save('%s_%s_%d_Label.png' %(save_path, name, i))
-        get_image_from_tensor(vis_pred[i], mask=True).save('%s_%s_%d_Pred.png' %(save_path, name, i))
+        get_cityscapes_image_from_tensor(image[i]).save('%s_%s_%d_Image.png' %(save_path, name, i))
+        get_cityscapes_image_from_tensor(writer_label[i], mask=True).save('%s_%s_%d_Label.png' %(save_path, name, i))
+        get_cityscapes_image_from_tensor(vis_pred[i], mask=True).save('%s_%s_%d_Pred.png' %(save_path, name, i))
 
         if softmax_gt is not None:
-            get_image_from_tensor(writer_softmax[i], mask=True).save('%s_%s_%d_Softmax.png' %(save_path, name, i))
+            get_cityscapes_image_from_tensor(writer_softmax[i], mask=True).save('%s_%s_%d_Softmax.png' %(save_path, name, i))
 
 
 def weights_init(m):
@@ -96,7 +83,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     np.random.seed(cfg.get("seed", 1337))
     random.seed(cfg.get("seed", 1337))
     
-    use_softmax_labels = cfg["data"]["dataset"] == "softmax_cityscapes_convention"
+    use_softmax_labels = "softmax" in cfg["data"]["dataset"]
 
     # Setup device
     if gpu == -1:
