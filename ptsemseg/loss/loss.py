@@ -138,3 +138,21 @@ def l1(input, target, weight=None):
         loss *= weight
 
     return torch.mean(loss)
+
+
+def cross_entropy1d(input, target, weight=None):
+
+    assert input.size()[:2] == target.size()[:2]
+    n_batch, n_heads, n_channels = input.size()
+    loss = 0
+
+    for i in range(n_heads):
+        
+        single_head_input = input[:, i]
+        single_head_target = target[:, i].view(-1)
+        
+        loss += F.cross_entropy(
+            single_head_input, single_head_target, weight=weight[i], reduce=True, reduction='mean'
+        )
+
+    return loss / float(n_batch)

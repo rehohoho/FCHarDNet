@@ -84,33 +84,26 @@ def write_images_to_dir(loader, image, gt, pred, step, save_dir, name, softmax_g
             get_image_from_tensor(writer_softmax[i], mask=True).save('%s_%s_%d_Softmax.png' %(save_path, name, i))
 
 
-def compute_loss(loss_fn, mode, images, labels, outputs, device, t_loader):
-    """ compute loss based on mode of operation (default, softmax, detector) """
+def compute_loss(loss_dict, images, label_dict, output_dict, device, t_loader):
+    """ compute loss based on available labels and output types """
 
-    softmax = None
-    if mode == 'softmax':
-        softmax = labels[1].to(device)
-        labels = labels[0].to(device)
-    elif mode == 'detector':
-        labels_detector = labels[1].to(device)
-        labels = labels[0].to(device)
-        outputs_detector = outputs[1]
-        outputs = outputs[0]
-    else:
-        labels = labels.to(device)
+    loss = 0 # adding loss is a tensor function that can be backpropped
 
-    if mode == 'softmax':
-        ignore_mask = t_loader.extract_ignore_mask(images)
-        loss = loss_fn(input=outputs, hard_target=labels, soft_target=softmax, ignore_mask=ignore_mask)
-    elif mode == 'detector':
-        loss = loss_fn[0](input=outputs, target=labels)
-        loss_head = loss_fn[1](input=outputs_detector, target=labels_detector)
-        print(loss, loss_head)
-        loss = loss + loss_head
-    else:
-        loss = loss_fn(input=outputs, target=labels)
+    for loss_name, loss_fn in loss_dict.items():
+        
+        if loss_name == "softmax_loss":
+            loss += loss_fn(input = output_dict["seg"], hard_target = label_dict["seg"].to(device), 
+                soft_target = label_dict["softmax"].to(device), 
+                ignore_mask = t_loader.extract_ignore_mask(images).to(device)
+            )
+        elif loss_name == "bin_class_loss":
+            loss += loss_fn(input = output_dict["bin_class"], target = label_dict["bin_class"].to(device))
+        elif loss_name == "class_loss":
+            loss += loss_fn(input = output_dict["class"], target = label_dict["class"].to(device))
+        else:
+            loss += loss_fn(input = output_dict["seg"], target = label_dict["seg"].to(device))
 
-    return outputs, labels, softmax, loss
+    return loss
 
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
@@ -124,12 +117,6 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     np.random.seed(cfg.get("seed", 1337))
     random.seed(cfg.get("seed", 1337))
     
-    mode = 'default'
-    if cfg["data"]["dataset"] == "softmax_cityscapes_convention":
-        mode == 'softmax'
-    if "detector_heads" in cfg["model"]:
-        mode = 'detector'
-
     # Setup device
     if gpu == -1:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -138,7 +125,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
     # Setup Augmentations
     augmentations = cfg["training"].get("augmentations", None)
-    if mode == 'softmax':
+    if cfg["data"]["dataset"] == "softmax_cityscapes_convention":
         data_aug = get_composed_augmentations_softmax(augmentations)
     else:
         data_aug = get_composed_augmentations(augmentations)
@@ -207,19 +194,14 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     print("Using optimizer {}".format(optimizer))
 
     scheduler = get_scheduler(optimizer, cfg["training"]["lr_schedule"])
-
-    if 'weight' in cfg['training']['loss']:
-        cfg['training']['loss']['weight'] = torch.Tensor(cfg['training']['loss']['weight']).to(device)
-    
     loss_fn = get_loss_function(cfg, device)
-    print("Using loss {}".format(loss_fn))
 
     if cfg["training"]["resume"] is not None:
         if os.path.isfile(cfg["training"]["resume"]):
             logger.info(
                 "Loading model and optimizer from checkpoint '{}'".format(cfg["training"]["resume"])
             )
-            checkpoint = torch.load(cfg["training"]["resume"])
+            checkpoint = torch.load(cfg["training"]["resume"], map_location=device)
             model.load_state_dict(checkpoint["model_state"], strict=False)
             if not model_only:
                 optimizer.load_state_dict(checkpoint["optimizer_state"])
@@ -251,7 +233,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     loss_n = 0
 
     while i <= cfg["training"]["train_iters"] and flag:
-        for (images, labels, _) in trainloader:
+        for (images, label_dict, _) in trainloader:
             i += 1
             start_ts = time.time()
             scheduler.step()
@@ -259,22 +241,22 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
             images = images.to(device)
             optimizer.zero_grad()
-            outputs = model(images)
+            output_dict = model(images)
 
-            outputs, labels, softmax, loss = compute_loss(  # considers mode of operation
-                loss_fn, mode, images, labels, outputs, device, t_loader
+            loss = compute_loss(    # considers key names in loss_dict and output_dict
+                loss_fn, images, label_dict, output_dict, device, t_loader
             )
             
-            loss.backward()
+            loss.backward()         # backprops sum of loss tensors, frozen components will have no grad_fn
             optimizer.step()
             c_lr = scheduler.get_lr()
 
-            if i%1000 == 0:             # log images, labels, outputs
-                pred_array = outputs.data.max(1)[1].cpu().numpy()
-                gt_array = labels.data.cpu().numpy()
+            if i%1000 == 0:             # log images, seg ground truths, predictions
+                pred_array = output_dict["seg"].data.max(1)[1].cpu().numpy()
+                gt_array = label_dict["seg"].data.cpu().numpy()
                 softmax_gt_array = None
-                if mode == 'softmax':
-                    softmax_gt_array = softmax.data.max(1)[1].cpu().numpy()
+                if "softmax" in label_dict:
+                    softmax_gt_array = label_dict["softmax"].data.max(1)[1].cpu().numpy()
                 write_images_to_board(t_loader, images, gt_array, pred_array, i, name = 'train', softmax_gt = softmax_gt_array)
 
                 if save_dir is not None:
@@ -308,24 +290,24 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                 loss_all = 0
                 loss_n = 0
                 with torch.no_grad():
-                    for i_val, (images_val, labels_val, _) in tqdm(enumerate(valloader)):
+                    for i_val, (images_val, label_dict_val, _) in tqdm(enumerate(valloader)):
                         
                         images_val = images_val.to(device)
-                        outputs = model(images_val)
+                        output_dict = model(images_val)
                         
-                        outputs, labels_val, softmax_val, val_loss = compute_loss(
-                            loss_fn, mode, images_val, labels_val, outputs, device, t_loader
+                        val_loss = compute_loss(
+                            loss_fn, images_val, label_dict_val, output_dict, device, v_loader
                         )
 
-                        pred_array = outputs.data.max(1)[1].cpu().numpy()
-                        gt_array = labels_val.data.cpu().numpy()
+                        pred_array = output_dict["seg"].data.max(1)[1].cpu().numpy()
+                        gt_array = label_dict_val["seg"].data.cpu().numpy()
 
                         running_metrics_val.update(gt_array, pred_array)
                         val_loss_meter.update(val_loss.item())
 
                 softmax_gt_array = None # log validation images
-                if mode == 'softmax':
-                    softmax_gt_array = softmax_val.data.max(1)[1].cpu().numpy()
+                if "softmax" in label_dict_val:
+                    softmax_gt_array = label_dict_val["softmax"].data.max(1)[1].cpu().numpy()
                 write_images_to_board(v_loader, images_val, gt_array, pred_array, i, 'validation', softmax_gt = softmax_gt_array)
                 if save_dir is not None:
                     images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)

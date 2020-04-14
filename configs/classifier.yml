@@ -33,7 +33,7 @@ training:
         momentum: 0.9
     class_loss: # loss used for classifier head
         name: 'cross_entropy1d'
-        weight: [[1.0, 2.0, 3.0, 4.0]] # 2D list, weight of each class for each head
+        weight: [[1.0, 1.0, 1.0, 1.0]] # 2D list, weight of each class for each head
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 180000
