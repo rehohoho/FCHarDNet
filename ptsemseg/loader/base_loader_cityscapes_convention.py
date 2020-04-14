@@ -65,7 +65,18 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         if 'detector' in datasets:
             self.files[self.split] += [ file for file in glob.glob(
                 os.path.join(self.root, 'detector/*images', self.split, '**/*.png'), recursive=True) ]
+    
+    def _init_classifier_head_labels(self, config, classifier_type):
+
+        if classifier_type not in config: return (False, None)
+
+        labels = []
+        for _, label in config[classifier_type].items():
+            labels.append(label)
         
+        return (True, labels)
+
+
     def __init__(
         self,
         root,
@@ -79,13 +90,6 @@ class BaseLoaderCityscapesConvention(data.Dataset):
     ):
         self.root = root
         self.split = split
-
-        self.detector_heads = False
-        if 'detector_heads' in config:
-            self.detector_heads = True
-            self.detector_label = []
-            for detector, label in config['detector_heads'].items():                
-                self.detector_label.append( label )
         
         self.is_transform = is_transform
         self.augmentations = augmentations
@@ -106,7 +110,10 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         print("Found %d %s images" % (len(self.files[split]), split))
 
         self.ignore_index = 250
-        # self.label_handler = label_handler(self.ignore_index)
+        self.label_handler = label_handler(self.ignore_index)
+
+        self.bin_classifiers, self.bin_label = self._init_classifier_head_labels(config, 'bin_classifiers')
+        self.classifiers, self.classifier_label = self._init_classifier_head_labels(config, 'classifiers')
 
     def __len__(self):
         """__len__"""
@@ -144,17 +151,46 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         if self.is_transform:
             img, lbl = self.transform(img, lbl, index)
 
-        if self.detector_heads:
-            lbl_head = []
-            for pos_label in self.detector_label:
-                if any(label in img_path for label in pos_label):
-                    lbl_head.append(1.0)
-                else:
-                    lbl_head.append(-1.0)
-            lbl_head = torch.from_numpy(np.array(lbl_head))
-            lbl = (lbl, lbl_head)
+        lbl_dict = {"seg": lbl}
+        # only append if used, only lbl_dict["seg"] is required
+        self._append_bin_classifier_label(lbl_dict, img_path)
+        self._append_classifier_label(lbl_dict, img_path)
+        
+        return img, lbl_dict, name
 
-        return img, lbl, name
+    def _append_bin_classifier_label(self, lbl_dict, img_path):
+        
+        if not self.bin_classifiers: return
+    
+        lbl_head = []
+        for pos_label in self.bin_label:
+            if any(label in img_path for label in pos_label):
+                lbl_head.append([1.0])
+            else:
+                lbl_head.append([-1.0])
+        
+        lbl_dict["bin_class"] = torch.from_numpy(np.array(lbl_head)).long()
+
+    def _append_classifier_label(self, lbl_dict, img_path):
+        
+        if not self.classifiers: return
+        
+        lbl_heads = []
+        for pos_labels in self.classifier_label:
+            
+            lbl_head = 0
+            for pos_label in pos_labels:
+                if pos_label in img_path:
+                    break
+                lbl_head += 1
+            
+            if lbl_head == len(pos_labels):
+                print("[LOADER] ERROR! Image at %s is not classified!" %img_path)
+                return
+            
+            lbl_heads.append([lbl_head])
+        
+        lbl_dict["class"] = torch.from_numpy(np.array(lbl_heads)).long()
 
     def transform(self, img, lbl, index):
         """transform

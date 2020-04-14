@@ -41,20 +41,23 @@ class ConvLayer(nn.Sequential):
         return super().forward(x)
         
 
-class DetectorHead(nn.Module):
+class ClassifierHead(nn.Module):
 
     def __init__(self, params):
         super().__init__()
+        
         assert 'neurons' in params and 'dropouts' in params and len(params['neurons']) == len(params['dropouts'])
+        if 'n_targets' not in params: params['n_targets'] = 1
 
-        neurons = [20480] + params['neurons'] + [1] # add flattened feature size and final output size
+        neurons = [20480] + params['neurons'] + [params['n_targets']] # add flattened feature size and final output size
         dropouts = params['dropouts'] + [0.0]
         n_layers = len(neurons)
         self.layers = nn.ModuleList([])
 
         for layer in range(n_layers - 1):
             self.layers.append( nn.Linear(neurons[layer], neurons[layer+1]) )
-            self.layers.append( nn.Dropout2d(p = dropouts[layer]) )
+            if dropouts[layer] != 0:
+                self.layers.append( nn.Dropout2d(p = dropouts[layer]) )
             
             if layer != n_layers - 2:
                 self.layers.append( nn.ReLU(inplace = True) )
@@ -66,7 +69,7 @@ class DetectorHead(nn.Module):
         for layer in range(len(self.layers)):
             out = self.layers[layer](out)
         
-        return torch.squeeze(out, dim = -1)
+        return out
 
 
 class HarDBlock(nn.Module):
@@ -171,8 +174,10 @@ class hardnet(nn.Module):
         modules_to_freeze = []
         if 'hardnet' in freeze:
             modules_to_freeze += [self.base, self.transUpBlocks, self.conv1x1_up, self.denseBlocksUp, self.finalConv]
-        if 'detectors' in freeze:
-            modules_to_freeze += [self.detector]
+        if 'bin_classifiers' in freeze:
+            modules_to_freeze += [self.bin_classifiers]
+        if 'classifiers' in freeze:
+            modules_to_freeze += [self.classifiers]
         
         for module in modules_to_freeze:
             if isinstance(module, nn.ModuleList):
@@ -191,7 +196,7 @@ class hardnet(nn.Module):
         
         print('Number of frozen layers: %d, Number of active layers: %d' %(n_frozen, n_not_frozen))
 
-    def __init__(self, n_classes=19, detector_heads=None, freeze = []):
+    def __init__(self, n_classes=19, bin_classifiers=None, classifiers=None, freeze = []):
         super(hardnet, self).__init__()
 
         first_ch  = [16,24,32,48]           # downsampling conv channels
@@ -262,17 +267,25 @@ class hardnet(nn.Module):
                out_channels=n_classes, kernel_size=1, stride=1,
                padding=0, bias=True)
                
-        self.detector = None
-        if detector_heads is not None:
-            self.detector = nn.ModuleList([])
-            for detector, params in detector_heads.items():
-                self.detector.append( DetectorHead(params = params) )
-        
+        self.bin_classifiers = self._init_classifier_head(bin_classifiers)
+        self.classifiers = self._init_classifier_head(classifiers)
         self._freeze_layers(freeze)
+
+    def _init_classifier_head(self, classifier_config):
+
+        if classifier_config is None: return None
+
+        layers = nn.ModuleList([])
+        for _, params in classifier_config.items():
+            layers.append( ClassifierHead(params = params) )
+        
+        return layers
 
     def forward(self, x):
         """ calls all the module lists in correct order """
         
+        out_dict = {}
+
         skip_connections = []
         size_in = x.size()
         
@@ -282,11 +295,8 @@ class hardnet(nn.Module):
                 skip_connections.append(x)
         out = x
 
-        if self.detector is not None:
-            detector_out = []
-            for i in range(len(self.detector)):
-                detector_out.append( self.detector[i](out) )        
-            detector_out = torch.stack(detector_out, dim = 0).t()
+        self._append_classifier_head_output(out_dict, "bin_class", self.bin_classifiers, out)
+        self._append_classifier_head_output(out_dict, "class", self.classifiers, out)
         
         for i in range(self.n_blocks):
             skip = skip_connections.pop()   # get output from skip layers
@@ -302,6 +312,17 @@ class hardnet(nn.Module):
                             mode="bilinear",
                             align_corners=True)
         
-        if self.detector is not None:
-            out = (out, detector_out)
-        return out
+        out_dict["seg"] = out
+        return out_dict
+    
+    def _append_classifier_head_output(self, out_dict, name, head, x):
+
+        if head is None: return
+        # TODO what if channels are different?
+        outputs = []    #(n_heads, n_channels)
+        for i in range(len(head)):
+            outputs.append( head[i](x) )
+        
+        outputs = torch.stack(outputs, dim = 1)
+        
+        out_dict[name] = outputs

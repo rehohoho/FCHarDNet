@@ -1,0 +1,41 @@
+model:
+    arch: hardnet
+    freeze: ['hardnet'] # portion of model to freeze: hardnet, bin_classifiers, classifiers
+    classifiers: # hidden layer configuration for each head, empty list means no hidden layer
+        environment:
+            neurons: []
+            dropouts: []
+            n_targets: 4
+data:
+    dataset: base_cityscapes_convention
+    version: detector
+    train_split: train
+    val_split: val
+    img_rows: 513
+    img_cols: 513
+    path: D:/data/
+    sbd_path: /mnt/ssd2/Cityscapes/
+    classifiers: # classes for each head
+        environment: ['bus_stop', 'junction', 'road_break', 'straight_pavement']
+training:
+    train_iters: 180000
+    batch_size: 2
+    val_interval: 20
+    n_workers: 2
+    print_interval: 10
+    augmentations:
+        hflip: 0.5
+        rscale_crop: [1024, 1024]
+    optimizer:
+        name: 'sgd'
+        lr: 0.2
+        weight_decay: 0.0005
+        momentum: 0.9
+    class_loss: # loss used for classifier head
+        name: 'cross_entropy1d'
+        weight: [[1.0, 2.0, 3.0, 4.0]] # 2D list, weight of each class for each head
+    lr_schedule: 
+        name: 'poly_lr'
+        max_iter: 180000
+    resume: D:/models/scooter_resized_halflabelled_180.pkl
+    finetune: None    

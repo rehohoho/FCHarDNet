@@ -1,7 +1,7 @@
 model:
     arch: hardnet
-    freeze: ['hardnet']
-    detector_heads:
+    freeze: ['hardnet'] # portion of model to freeze: hardnet, bin_classifiers, classifiers
+    bin_classifiers: # hidden layer configuration for each head, empty list means no hidden layer
         bus_stop:
             neurons: [512]
             dropouts: [0.5]
@@ -23,7 +23,7 @@ data:
     img_cols: 513
     path: D:/data/
     sbd_path: /mnt/ssd2/Cityscapes/
-    detector_heads:
+    bin_classifiers: # positive label for each binary classifier head
         bus_stop: ['bus_stop']
         junction: ['junction']
         road_break: ['road_break']
@@ -31,8 +31,8 @@ data:
 training:
     train_iters: 180000
     batch_size: 2
-    val_interval: 1000
-    n_workers: 1
+    val_interval: 20
+    n_workers: 2
     print_interval: 10
     augmentations:
         hflip: 0.5
@@ -47,9 +47,9 @@ training:
         min_K: 4096
         loss_th: 0.3
         size_average: True
-    detector_loss:
+    bin_class_loss: # loss used for binary classifier head
         name: 'l1'
-        weight: [1.0, 1.0, 1.0, 1.0]
+        weight: [[1.0], [1.0], [1.0], [1.0]] # 2D list, weight of each class for each head
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 180000
