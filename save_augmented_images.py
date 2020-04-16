@@ -115,6 +115,12 @@ class DataLoader():
                 if self.dataloader_type == "softmax_cityscapes_convention": 
                     softmax_array = np.argmax(softmax_array, axis = 1)
                     softmax_array = [self.t_loader.decode_segmap(i) for i in softmax_array]
+                    
+                    ignore_mask_array = self.t_loader.extract_ignore_mask(images).data.cpu().numpy()
+                    ignore_mask_array = [self.t_loader.decode_segmap(i) for i in ignore_mask_array]
+                    ignore_path = self.get_save_path_names(name, "label", file_type)
+                    ignore_path = [i.replace("seg", "ignore") for i in ignore_path]
+                    save_batch_noreplace(ignore_path, ignore_mask_array, mask=True)
 
             else:
                 file_type = ".npy"

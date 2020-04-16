@@ -93,6 +93,7 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
                 os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
 
         self.ignore_index = 250
+        self.label_handler = label_handler(self.ignore_index)
         
         if not self.files[split]:
             raise Exception("No files for split=[%s] found in %s" % (split, self.root))
@@ -180,16 +181,26 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
 
         return img, lbl, lbl_temp
     
-    def extract_ignore_mask(self, image):
+    def extract_ignore_mask(self, image, device=None):
         """ Retrieve loss weights to zero padded portions of image/predictions 
         weight is repeated to fit shape of input / target in BCELoss
         
         Args:   image           NCHW tensor
         Return: ignore_mask     NHW tensor
         """
-        
-        padded_single_channel = torch.sum(image, dim=1)
-        
+
+        std = torch.Tensor([57.375, 57.120000000000005, 58.395])
+        mean = torch.Tensor([103.53, 116.28, 123.675])
+        if device is not None:
+            std = std.to(device)
+            mean = mean.to(device)
+
+        image_hwc = image.transpose(1,2).transpose(2,3)
+        image_hwc = image_hwc * std + mean
+        image_hwc = image_hwc.type(torch.cuda.LongTensor)
+
+        padded_single_channel = torch.sum(image_hwc, dim=3)
+
         ignore_mask = torch.where(
             padded_single_channel == 0,
             padded_single_channel,

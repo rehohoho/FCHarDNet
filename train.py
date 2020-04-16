@@ -236,7 +236,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                     write_images_to_dir(t_loader, image_array, gt_array, pred_array, i, save_dir, name = 'train', softmax_gt = softmax_gt_array)
 
             if use_softmax_labels: # has to be done outside loss function where image is not passed in
-                ignore_mask = t_loader.extract_ignore_mask(images)
+                ignore_mask = t_loader.extract_ignore_mask(images, device = device)
                 loss = loss_fn(input=outputs, hard_target=labels, soft_target=softmax, ignore_mask=ignore_mask)
             else:
                 loss = loss_fn(input=outputs, target=labels)
@@ -284,7 +284,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
                         outputs = model(images_val)
                         if use_softmax_labels:
-                            ignore_mask_val = t_loader.extract_ignore_mask(images_val)
+                            ignore_mask_val = t_loader.extract_ignore_mask(images_val, device)
                             val_loss = loss_fn(input=outputs, hard_target=labels_val, soft_target=softmax_val, ignore_mask=ignore_mask_val)
                         else:
                             val_loss = loss_fn(input=outputs, target=labels_val)
