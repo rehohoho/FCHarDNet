@@ -50,6 +50,8 @@ def bootstrapped_cross_entropy2d(input, target, min_K, loss_th, weight=None, siz
         input = input.transpose(1, 2).transpose(2, 3).contiguous().view(-1, c)
         target = target.view(-1)
 
+        # takes logits as input, hard labels as target
+        # performs log_softmax and nll_loss
         loss = F.cross_entropy(
             input, target, weight=weight, reduce=False, size_average=False, ignore_index=250
         )
@@ -90,9 +92,7 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
     if h != h_hardtar and w != w_hardtar:  # upsample labels
         input = F.interpolate(input, size=(h_hardtar, w_hardtar), mode="bilinear", align_corners=True)
 
-    # log_softmax >> softmax, penalises larger mistakes in likelihood space
-    hard_input = F.log_softmax(input, dim = 1)
-    soft_input = F.log_softmax(input / temperature, dim=1)
+    soft_input = F.log_softmax(input / temperature, dim=1) # KL-div expects log probabilities for inputs, probabilities for targets
 
     def _soft_and_hard_xentropy_single(
         hard_input, hard_target, 
@@ -103,13 +103,14 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
         hard_input = hard_input.transpose(1, 2).transpose(2, 3).contiguous().view(-1, c) # CHW -> HWC -> NC
         hard_target = hard_target.view(-1) # HW -> N
         
+        # performs log_softmax and nll_loss
         hard_target_loss = F.cross_entropy(
             hard_input, hard_target, weight=weight, reduce=True, reduction='mean', ignore_index=250
         )
 
         # ignore mask is repeated to fit shape of hard_input / target
         soft_target_loss = F.kl_div(
-            soft_input*ignore_mask, soft_target*ignore_mask, reduce = True, reduction='mean'
+            soft_input*ignore_mask, soft_target*ignore_mask, reduce = True, reduction='batchmean'
         )
         
         return hard_target_loss, soft_target_loss
@@ -118,13 +119,13 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
     # Bootstrap from each image not entire batch
     for i in range(batch_size):
         hard_target_loss, soft_target_loss = _soft_and_hard_xentropy_single(
-            hard_input=torch.unsqueeze(hard_input[i], 0),
+            hard_input=torch.unsqueeze(input[i], 0),
             hard_target=torch.unsqueeze(hard_target[i], 0),
             soft_input=torch.unsqueeze(soft_input[i], 0),
             soft_target=torch.unsqueeze(soft_target[i], 0),
             ignore_mask=ignore_mask[i]
         )
-        soft_target_loss *= 10
+        soft_target_loss *= 1000
         loss += hard_target_loss + soft_target_loss
         
     return loss / float(batch_size)
