@@ -2,12 +2,34 @@ import os
 import torch
 import numpy as np
 import glob
+import json
 
 from PIL import Image
 from torch.utils import data
 
 from ptsemseg.loader.label_handler.label_handler import label_handler
 from ptsemseg.augmentations import Compose, RandomHorizontallyFlip, RandomRotate, Scale
+
+
+def _get_json_param_value(img_path, json_param):
+
+    dirname = os.path.dirname(img_path)
+    img_basename = os.path.basename(img_path)
+    img_splitname = os.path.splitext(img_basename)[0].split('_')
+
+    json_path = os.path.join(
+        dirname,
+        'measurements_%05d_%s.json' \
+        %(int(img_splitname[1]), img_splitname[2])
+    )
+    
+    with open(json_path, 'r') as measurement_file:
+        measurements = json.load(measurement_file)
+    
+    if json_param not in measurements.keys():
+        print("Json param %s is not found in %s." %(json_param, json_path))
+    
+    return measurements[json_param]
 
 
 class BaseLoaderCityscapesConvention(data.Dataset):
@@ -161,10 +183,12 @@ class BaseLoaderCityscapesConvention(data.Dataset):
     def _append_bin_classifier_label(self, lbl_dict, img_path):
         
         if not self.bin_classifiers: return
-    
+
+        json_param_value = _get_json_param_value(img_path, 'path_type')
+
         lbl_head = []
-        for pos_label in self.bin_label:
-            if any(label in img_path for label in pos_label):
+        for positive_label in self.bin_label:
+            if json_param_value in positive_label:
                 lbl_head.append([1.0])
             else:
                 lbl_head.append([-1.0])
@@ -175,17 +199,19 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         
         if not self.classifiers: return
         
+        json_param_value = _get_json_param_value(img_path, 'path_type')
+        
         lbl_heads = []
         for pos_labels in self.classifier_label:
             
             lbl_head = 0
             for pos_label in pos_labels:
-                if pos_label in img_path:
+                if json_param_value in pos_label:
                     break
                 lbl_head += 1
             
             if lbl_head == len(pos_labels):
-                print("[LOADER] ERROR! Image at %s is not classified!" %img_path)
+                print("[LOADER] ERROR! Unknown classification label %s at %s" %(json_param_value, img_path))
                 return
             
             lbl_heads.append([lbl_head])
