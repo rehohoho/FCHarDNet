@@ -1,5 +1,16 @@
-python /home/whizz/Desktop/deeplabv3/FCHarDNet/inference.py \
-    --model_path='/home/whizz/Desktop/deeplabv3/FCHarDNet/runs/scooter/cur/hardnet_scooter_best_model.pkl' \
-    --folder_path='/home/whizz/data/projection/11-May-2019-18-31-31' \
-    --output_path='/home/whizz/data/projection/fchardnet_mapillary' \
-    --resize
+python inference.py \
+    --model_directory='D:/models/scooter_resized_halflabelled_180.pkl' \
+    --image_folder='D:/data/detector/detector_images' \
+    --output_folder='D:/data/detector/detector_vis' \
+    --tar_size=513 \
+    --vis_mask \
+    --add_orig
+
+# MAIN ARGUMENTS
+    # --image_folder        # path to folder with images
+    # --output_folder       # path to folder for segmented images
+    # --model_directory     # path to the directory with tar.gz model checkpoint"
+
+# VISUALISATION ARGUMENTS
+    # --vis_mask            # flag to turn mask into visualisation
+    # --add_orig            # flag to attach segmentation image with original
