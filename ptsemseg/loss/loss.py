@@ -129,30 +129,25 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
     return loss / float(batch_size)
 
 
-def l1(input, target, weight=None):
-    
-    assert input.size() == target.size()
+def l1(input, target, positive_example_weight = 1.0):
+    # expects input of size N and target of size N
+    assert input.size()[0] == target.size()[0]
 
-    loss = torch.abs(input - target)
-    if weight is not None:
-        loss *= weight
+    weight = target*positive_example_weight
+    weight[weight<0] = 1
+
+    loss = torch.abs(input.view(-1) - target)
+    loss *= weight
 
     return torch.mean(loss)
 
 
 def cross_entropy1d(input, target, weight=None):
+    # expects input of NxC and target of N
+    assert input.size()[0] == target.size()[0]
 
-    assert input.size()[:2] == target.size()[:2]
-    n_batch, n_heads, n_channels = input.size()
-    loss = 0
+    loss = F.cross_entropy(
+        input, target, weight=weight, reduce=True, reduction='mean'
+    )
 
-    for i in range(n_heads):
-        
-        single_head_input = input[:, i]
-        single_head_target = target[:, i].view(-1)
-        
-        loss += F.cross_entropy(
-            single_head_input, single_head_target, weight=weight[i], reduce=True, reduction='mean'
-        )
-
-    return loss / float(n_batch)
+    return loss
