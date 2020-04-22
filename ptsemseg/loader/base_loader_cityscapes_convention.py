@@ -92,9 +92,9 @@ class BaseLoaderCityscapesConvention(data.Dataset):
 
         if classifier_type not in config: return (False, None)
 
-        labels = []
-        for _, label in config[classifier_type].items():
-            labels.append(label)
+        labels = {}
+        for name, label in config[classifier_type].items():
+            labels[name] = label
         
         return (True, labels)
 
@@ -186,14 +186,12 @@ class BaseLoaderCityscapesConvention(data.Dataset):
 
         json_param_value = _get_json_param_value(img_path, 'path_type')
 
-        lbl_head = []
-        for positive_label in self.bin_label:
-            if json_param_value in positive_label:
-                lbl_head.append([1.0])
+        for name, pos_labels in self.bin_label.items():
+            if json_param_value in pos_labels:
+                label = 1.0
             else:
-                lbl_head.append([-1.0])
-        
-        lbl_dict["bin_class"] = torch.from_numpy(np.array(lbl_head)).long()
+                label = -1.0
+            lbl_dict[name] = torch.from_numpy(np.array(label)).long()
 
     def _append_classifier_label(self, lbl_dict, img_path):
         
@@ -201,22 +199,14 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         
         json_param_value = _get_json_param_value(img_path, 'path_type')
         
-        lbl_heads = []
-        for pos_labels in self.classifier_label:
+        for name, pos_labels in self.classifier_label.items():
             
-            lbl_head = 0
-            for pos_label in pos_labels:
-                if json_param_value in pos_label:
-                    break
-                lbl_head += 1
-            
-            if lbl_head == len(pos_labels):
+            if json_param_value not in pos_labels:
                 print("[LOADER] ERROR! Unknown classification label %s at %s" %(json_param_value, img_path))
                 return
             
-            lbl_heads.append([lbl_head])
-        
-        lbl_dict["class"] = torch.from_numpy(np.array(lbl_heads)).long()
+            label = pos_labels.index(json_param_value)
+            lbl_dict[name] = torch.from_numpy(np.array(label)).long()
 
     def transform(self, img, lbl, index):
         """transform

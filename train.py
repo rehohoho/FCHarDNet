@@ -89,25 +89,24 @@ def compute_loss(loss_dict, images, label_dict, output_dict, device, t_loader):
 
     loss = 0 # adding loss is a tensor function that can be backpropped
 
-    for loss_name, loss_fn in loss_dict.items():
+    for loss_name, loss_fn in loss_dict.items(): # only adds loss if it is defined
         
+        k = loss_name.replace("_loss", "")
         if loss_name == "softmax_loss":
             loss += loss_fn(input = output_dict["seg"], hard_target = label_dict["seg"].to(device), 
                 soft_target = label_dict["softmax"].to(device), 
                 ignore_mask = t_loader.extract_ignore_mask(images).to(device)
             )
-        elif loss_name == "bin_class_loss":
-            loss += loss_fn(input = output_dict["bin_class"], target = label_dict["bin_class"].to(device))
-        elif loss_name == "class_loss":
-            loss += loss_fn(input = output_dict["class"], target = label_dict["class"].to(device))
         else:
-            loss += loss_fn(input = output_dict["seg"], target = label_dict["seg"].to(device))
+            loss += loss_fn(input = output_dict[k], target = label_dict[k].to(device))
 
     return loss
+
 
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
         nn.init.xavier_normal_(m.weight)
+
 
 def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=None):
 
@@ -194,7 +193,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     print("Using optimizer {}".format(optimizer))
 
     scheduler = get_scheduler(optimizer, cfg["training"]["lr_schedule"])
-    loss_fn = get_loss_function(cfg, device)
+    loss_dict = get_loss_function(cfg, device)
 
     if cfg["training"]["resume"] is not None:
         if os.path.isfile(cfg["training"]["resume"]):
@@ -244,7 +243,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
             output_dict = model(images)
 
             loss = compute_loss(    # considers key names in loss_dict and output_dict
-                loss_fn, images, label_dict, output_dict, device, t_loader
+                loss_dict, images, label_dict, output_dict, device, t_loader
             )
             
             loss.backward()         # backprops sum of loss tensors, frozen components will have no grad_fn

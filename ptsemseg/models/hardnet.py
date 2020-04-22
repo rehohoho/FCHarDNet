@@ -274,10 +274,10 @@ class hardnet(nn.Module):
     def _init_classifier_head(self, classifier_config):
 
         if classifier_config is None: return None
-
-        layers = nn.ModuleList([])
-        for _, params in classifier_config.items():
-            layers.append( ClassifierHead(params = params) )
+        
+        layers = nn.ModuleDict([])
+        for name, params in classifier_config.items():
+            layers[name] = ClassifierHead(params = params)
         
         return layers
 
@@ -295,8 +295,8 @@ class hardnet(nn.Module):
                 skip_connections.append(x)
         out = x
 
-        self._append_classifier_head_output(out_dict, "bin_class", self.bin_classifiers, out)
-        self._append_classifier_head_output(out_dict, "class", self.classifiers, out)
+        self._append_classifier_head_output(out_dict, self.bin_classifiers, out)
+        self._append_classifier_head_output(out_dict, self.classifiers, out)
         
         for i in range(self.n_blocks):
             skip = skip_connections.pop()   # get output from skip layers
@@ -315,14 +315,9 @@ class hardnet(nn.Module):
         out_dict["seg"] = out
         return out_dict
     
-    def _append_classifier_head_output(self, out_dict, name, head, x):
+    def _append_classifier_head_output(self, out_dict, head, x):
 
         if head is None: return
-        # TODO what if channels are different?
-        outputs = []    #(n_heads, n_channels)
-        for i in range(len(head)):
-            outputs.append( head[i](x) )
-        
-        outputs = torch.stack(outputs, dim = 1)
-        
-        out_dict[name] = outputs
+
+        for name, layers in head.items():
+            out_dict[name] = head[name](x)
