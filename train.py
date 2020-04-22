@@ -17,7 +17,7 @@ from ptsemseg.models import get_model
 from ptsemseg.loss import get_loss_function
 from ptsemseg.loader import get_loader
 from ptsemseg.utils import get_logger
-from ptsemseg.metrics import runningScore, averageMeter
+from ptsemseg.metrics import runningScoreSeg, runningScoreClassifier, averageMeter
 from ptsemseg.augmentations import get_composed_augmentations, get_composed_augmentations_softmax
 from ptsemseg.schedulers import get_scheduler
 from ptsemseg.optimizers import get_optimizer
@@ -167,7 +167,13 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     )
 
     # Setup Metrics
-    running_metrics_val = runningScore(n_classes)
+    running_metrics_val = {"seg": runningScoreSeg(n_classes)}
+    if "classifiers" in cfg["data"]:
+        for name, classes in cfg["data"]["classifiers"].items():
+            running_metrics_val[name] = runningScoreClassifier( len(classes) )
+    if "bin_classifiers" in cfg["data"]:
+        for name, classes in cfg["data"]["bin_classifiers"].items():
+            running_metrics_val[name] = runningScoreClassifier(2)
 
     # Setup Model
     model = get_model(cfg["model"], n_classes).to(device)
@@ -295,16 +301,25 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                         output_dict = model(images_val)
                         
                         val_loss = compute_loss(
-                            loss_fn, images_val, label_dict_val, output_dict, device, v_loader
+                            loss_dict, images_val, label_dict_val, output_dict, device, v_loader
                         )
-
-                        pred_array = output_dict["seg"].data.max(1)[1].cpu().numpy()
-                        gt_array = label_dict_val["seg"].data.cpu().numpy()
-
-                        running_metrics_val.update(gt_array, pred_array)
                         val_loss_meter.update(val_loss.item())
 
+                        for name, metrics in running_metrics_val.items():
+                            gt_array = label_dict_val[name].data.cpu().numpy()
+                            if name+'_loss' in cfg['training'] and cfg['training'][name+'_loss']['name'] == 'l1':
+                                pred_array = output_dict[name].data.cpu().numpy()
+                                pred_array = np.sign(pred_array)
+                                pred_array[pred_array == -1] = 0
+                                gt_array[gt_array == -1] = 0
+                            else:
+                                pred_array = output_dict[name].data.max(1)[1].cpu().numpy()
+
+                            metrics.update(gt_array, pred_array)
+
                 softmax_gt_array = None # log validation images
+                pred_array = output_dict["seg"].data.max(1)[1].cpu().numpy()
+                gt_array = label_dict_val["seg"].data.cpu().numpy()
                 if "softmax" in label_dict_val:
                     softmax_gt_array = label_dict_val["softmax"].data.max(1)[1].cpu().numpy()
                 write_images_to_board(v_loader, images_val, gt_array, pred_array, i, 'validation', softmax_gt = softmax_gt_array)
@@ -312,22 +327,26 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                     images_val = images_val.cpu().numpy().transpose(0, 2, 3, 1)
                     write_images_to_dir(v_loader, images_val, gt_array, pred_array, i, save_dir, name='validation', softmax_gt = softmax_gt_array)
 
+                logger.info("Iter %d Val Loss: %.4f" % (i + 1, val_loss_meter.avg))
                 writer.add_scalar("loss/val_loss", val_loss_meter.avg, i + 1)
 
-                logger.info("Iter %d Val Loss: %.4f" % (i + 1, val_loss_meter.avg))
+                for name, metrics in running_metrics_val.items():
+                    
+                    overall, classwise = metrics.get_scores()
+                    
+                    for k, v in overall.items():
+                        logger.info("{}_{}: {}".format(name, k, v))
+                        writer.add_scalar("val_metrics/{}_{}".format(name, k), v, i + 1)
 
-                score, class_iou = running_metrics_val.get_scores()
-                for k, v in score.items():
-                    print(k, v)
-                    logger.info("{}: {}".format(k, v))
-                    writer.add_scalar("val_metrics/{}".format(k), v, i + 1)
+                        if k == cfg["training"]["save_metric"]:
+                            curr_performance = v
 
-                for k, v in class_iou.items():
-                    logger.info("{}: {}".format(k, v))
-                    writer.add_scalar("val_metrics/cls_{}".format(k), v, i + 1)
+                    for metric_name, metric in classwise.items():
+                        for k, v in metric.items():
+                            logger.info("{}_{}_{}: {}".format(name, metric_name, k, v))
+                            writer.add_scalar("val_metrics/{}_{}_{}".format(name, metric_name, k), v, i + 1)
 
-                val_loss_meter.reset()
-                running_metrics_val.reset()
+                    metrics.reset()
                 
                 state = {
                       "epoch": i + 1,
@@ -341,8 +360,8 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                 )
                 torch.save(state, save_path)
 
-                if score["Mean IoU : \t"] >= best_iou:
-                    best_iou = score["Mean IoU : \t"]
+                if curr_performance >= best_iou:
+                    best_iou = curr_performance
                     state = {
                         "epoch": i + 1,
                         "model_state": model.state_dict(),
