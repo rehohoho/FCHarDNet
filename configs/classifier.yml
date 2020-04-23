@@ -1,0 +1,55 @@
+model:
+    arch: hardnet
+    freeze: ['hardnet'] # portion of model to freeze: hardnet, bin_classifiers, classifiers
+    classifiers: # !!name of head has to match in model, data and loss
+        environment: # multihead classifier
+            neurons: [] # hidden layer configuration, empty list means no hidden layer
+            dropouts: []
+            n_targets: 4
+        stop: # binary classifier: declared with no n_target
+            neurons: []
+            dropouts: []
+data:
+    dataset: base_cityscapes_convention
+    version: detector
+    train_split: train
+    val_split: val
+    img_rows: 513
+    img_cols: 513
+    path: D:/data/
+    sbd_path: /mnt/ssd2/Cityscapes/
+    classifiers: # multiple classes to classify
+        environment: ['bus_stop', 'junction', 'road_break', 'straight_pavement']
+    bin_classifiers: # positive labels only, can have multiple
+        stop: ['bus_stop', 'junction', 'road_break']
+training:
+    train_iters: 500
+    batch_size: 4
+    val_interval: 50
+    n_workers: 4
+    print_interval: 10
+    augmentations:
+        hflip: 0.5
+        rscale_crop: [1024, 1024]
+    optimizer:
+        name: 'sgd'
+        lr: 0.02
+        weight_decay: 0.0005
+        momentum: 0.9
+    seg_loss:
+        name: 'bootstrapped_cross_entropy'
+        min_K: 4096
+        loss_th: 0.3
+        size_average: True
+    environment_loss: # multihead classifer loss, cross entropy example
+        name: 'cross_entropy1d'
+        weight: [1.0, 1.0, 1.0, 1.0]
+    stop_loss: # binary classifier loss, l1 example
+        name: 'l1'
+        positive_example_weight: 4.0
+    lr_schedule: 
+        name: 'poly_lr'
+        max_iter: 500
+    resume: D:/models/scooter_resized_halflabelled_180.pkl
+    finetune: None
+    save_metric: "Overall Accuracy: \t" # "Mean IoU : \t" for seg, "Overall Accuracy: \t" for classifier

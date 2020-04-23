@@ -2,12 +2,34 @@ import os
 import torch
 import numpy as np
 import glob
+import json
 
 from PIL import Image
 from torch.utils import data
 
 from ptsemseg.loader.label_handler.label_handler import label_handler
 from ptsemseg.augmentations import Compose, RandomHorizontallyFlip, RandomRotate, Scale
+
+
+def _get_json_param_value(img_path, json_param):
+
+    dirname = os.path.dirname(img_path)
+    img_basename = os.path.basename(img_path)
+    img_splitname = os.path.splitext(img_basename)[0].split('_')
+
+    json_path = os.path.join(
+        dirname,
+        'measurements_%05d_%s.json' \
+        %(int(img_splitname[1]), img_splitname[2])
+    )
+    
+    with open(json_path, 'r') as measurement_file:
+        measurements = json.load(measurement_file)
+    
+    if json_param not in measurements.keys():
+        print("Json param %s is not found in %s." %(json_param, json_path))
+    
+    return measurements[json_param]
 
 
 class BaseLoaderCityscapesConvention(data.Dataset):
@@ -41,20 +63,56 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         "cityscapes": [0.0, 0.0, 0.0],
     }  # pascal mean for PSPNet and ICNet pre-trained model
 
+    def _init_get_files(self, datasets):
+        self.files[self.split] = []
+
+        if 'cityscapes' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'cityscapes/*images', self.split, '**/*leftImg8bit.png')) ]
+        if 'scooter' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter/*images', self.split, '**/*.png')) ]
+        if 'scooter_small' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter_small/*images', self.split, '**/*.png')) ]
+        if 'scooter_halflabelled' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'scooter_halflabelled/*images', self.split, '**/*.png')) ]
+        if 'mapillary' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'mapillary/*images', self.split, '*.jpg')) ]
+        if 'bdd100k' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
+        if 'detector' in datasets:
+            self.files[self.split] += [ file for file in glob.glob(
+                os.path.join(self.root, 'detector/*images', self.split, '**/*.png'), recursive=True) ]
+    
+    def _init_classifier_head_labels(self, config, classifier_type):
+
+        if classifier_type not in config: return (False, None)
+
+        labels = {}
+        for name, label in config[classifier_type].items():
+            labels[name] = label
+        
+        return (True, labels)
+
+
     def __init__(
         self,
         root,
+        config,
         split="train",
         is_transform=False,
         img_size=(1024, 2048),
         augmentations=None,
         img_norm=True,
-        version="cityscapes",
         test_mode=False,
     ):
         self.root = root
         self.split = split
-
+        
         self.is_transform = is_transform
         self.augmentations = augmentations
         self.img_norm = img_norm
@@ -64,37 +122,20 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         self.mean = np.array(self.mean_rgb["cityscapes"])
         self.files = {}
 
-        datasets = version.replace(' ', '').split(',')
+        assert 'version' in config
+        datasets = config['version'].replace(' ', '').split(',')
         print('Datasets used:', datasets)
         
-        self.files[split] = []
-
-        if 'cityscapes' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'cityscapes/*images', self.split, '**/*leftImg8bit.png')) ]
-        if 'scooter' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter/*images', self.split, '**/*.png')) ]
-        if 'scooter_small' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_small/*images', self.split, '**/*.png')) ]
-        if 'scooter_halflabelled' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_halflabelled/*images', self.split, '**/*.png')) ]
-        if 'mapillary' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'mapillary/*images', self.split, '*.jpg')) ]
-        if 'bdd100k' in datasets:
-            self.files[split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
+        self._init_get_files(datasets)
+        if not self.files[split]:
+            raise Exception("No files for split=[%s] found in %s" % (split, self.root))
+        print("Found %d %s images" % (len(self.files[split]), split))
 
         self.ignore_index = 250
         self.label_handler = label_handler(self.ignore_index)
 
-        if not self.files[split]:
-            raise Exception("No files for split=[%s] found in %s" % (split, self.root))
-
-        print("Found %d %s images" % (len(self.files[split]), split))
+        self.bin_classifiers, self.bin_label = self._init_classifier_head_labels(config, 'bin_classifiers')
+        self.classifiers, self.classifier_label = self._init_classifier_head_labels(config, 'classifiers')
 
     def __len__(self):
         """__len__"""
@@ -114,7 +155,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
             lbl_path = img_path.replace('images','label').replace('.jpg', '_train_id.png')
         elif dataset_type == 'cityscapes':
             lbl_path = img_path.replace('images','seg').replace('_leftImg8bit.png','_gtFine_labelIds.png')
-        elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled':
+        elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled' or 'detector':
             lbl_path = img_path.replace('images','seg')
         
         name = img_path.split(os.sep)[-2:]
@@ -132,8 +173,40 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         if self.is_transform:
             img, lbl = self.transform(img, lbl, index)
 
+        lbl_dict = {"seg": lbl}
+        # only append if used, only lbl_dict["seg"] is required
+        self._append_bin_classifier_label(lbl_dict, img_path)
+        self._append_classifier_label(lbl_dict, img_path)
+        
+        return img, lbl_dict, name
 
-        return img, lbl, name
+    def _append_bin_classifier_label(self, lbl_dict, img_path):
+        
+        if not self.bin_classifiers: return
+
+        json_param_value = _get_json_param_value(img_path, 'path_type')
+
+        for name, pos_labels in self.bin_label.items():
+            if json_param_value in pos_labels:
+                label = 1.0
+            else:
+                label = -1.0
+            lbl_dict[name] = torch.from_numpy(np.array(label)).long()
+
+    def _append_classifier_label(self, lbl_dict, img_path):
+        
+        if not self.classifiers: return
+        
+        json_param_value = _get_json_param_value(img_path, 'path_type')
+        
+        for name, pos_labels in self.classifier_label.items():
+            
+            if json_param_value not in pos_labels:
+                print("[LOADER] ERROR! Unknown classification label %s at %s" %(json_param_value, img_path))
+                return
+            
+            label = pos_labels.index(json_param_value)
+            lbl_dict[name] = torch.from_numpy(np.array(label)).long()
 
     def transform(self, img, lbl, index):
         """transform

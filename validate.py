@@ -13,7 +13,7 @@ from pytorch_bn_fusion.bn_fusion import fuse_bn_recursively
 
 from ptsemseg.models import get_model
 from ptsemseg.loader import get_loader
-from ptsemseg.metrics import runningScore
+from ptsemseg.metrics import runningScoreSeg
 from ptsemseg.utils import convert_state_dict
 from ptsemseg.augmentations import get_composed_augmentations, get_composed_augmentations_softmax
 
@@ -58,7 +58,7 @@ def validate(cfg, args):
     n_classes = loader.n_classes
 
     valloader = data.DataLoader(loader, batch_size=1, num_workers=1)
-    running_metrics = runningScore(n_classes)
+    running_metrics = runningScoreSeg(n_classes)
 
     # Setup Model
 

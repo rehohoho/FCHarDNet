@@ -18,7 +18,6 @@ def cross_entropy2d(input, target, weight=None, size_average=True):
     return loss
 
 
-
 def multi_scale_cross_entropy2d(input, target, loss_th, weight=None, size_average=True, scale_weight=[1.0, 0.4]):
     if not isinstance(input, tuple):
         return cross_entropy2d(input=input, target=target, weight=weight, size_average=size_average)
@@ -129,3 +128,27 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
         loss += hard_target_loss + soft_target_loss
         
     return loss / float(batch_size)
+
+
+def l1(input, target, positive_example_weight = 1.0):
+    # expects input of size N and target of size N
+    assert input.size()[0] == target.size()[0]
+
+    weight = target*positive_example_weight
+    weight[weight<0] = 1
+
+    loss = torch.abs(input.view(-1) - target)
+    loss *= weight
+
+    return torch.mean(loss)
+
+
+def cross_entropy1d(input, target, weight=None):
+    # expects input of NxC and target of N
+    assert input.size()[0] == target.size()[0]
+
+    loss = F.cross_entropy(
+        input, target, weight=weight, reduce=True, reduction='mean'
+    )
+
+    return loss

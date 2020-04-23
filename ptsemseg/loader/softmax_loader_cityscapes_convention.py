@@ -48,12 +48,12 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
     def __init__(
         self,
         root,
+        config,
         split="train",
         is_transform=False,
         img_size=(1024, 2048),
         augmentations=None,
         img_norm=True,
-        version="cityscapes",
         test_mode=False,
     ):
         self.root = root
@@ -68,7 +68,8 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
         self.mean = np.array(self.mean_rgb["cityscapes"])
         self.files = {}
 
-        datasets = version.replace(' ', '').split(',')
+        assert 'version' in config
+        datasets = config['version'].replace(' ', '').split(',')
         print('Datasets used:', datasets)
         
         self.files[split] = []
@@ -115,20 +116,20 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
         """
         img_path = self.files[self.split][index].rstrip()
         lbl_path = img_path.replace('images', 'seg')
-        lbl_temp_path = img_path.replace('images', 'softmax_temp')
+        lbl_seg_path = img_path.replace('images', 'softmax_temp')
         dataset_type = img_path.split(self.root)[-1].split(os.sep)[0]
 
         if dataset_type == 'mapillary':
             lbl_path = lbl_path.replace('.jpg', '.png')
-            lbl_temp_path = lbl_temp_path.replace('.jpg', '.npy')
+            lbl_seg_path = lbl_seg_path.replace('.jpg', '.npy')
         elif dataset_type == 'bdd100k':
             lbl_path = lbl_path.replace('.jpg', '_train_id.png')
-            lbl_temp_path = lbl_temp_path.replace('.jpg', '_train_id.npy')
+            lbl_seg_path = lbl_seg_path.replace('.jpg', '_train_id.npy')
         elif dataset_type == 'cityscapes':
             lbl_path = lbl_path.replace('_leftImg8bit.png','_gtFine_labelIds.png')
-            lbl_temp_path = lbl_temp_path.replace('_leftImg8bit.png','_gtFine_labelIds.npy')
+            lbl_seg_path = lbl_seg_path.replace('_leftImg8bit.png','_gtFine_labelIds.npy')
         elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled':
-            lbl_temp_path = lbl_temp_path.replace('.png', '.npy')
+            lbl_seg_path = lbl_seg_path.replace('.png', '.npy')
             
         name = img_path.split(os.sep)[-2:]
         name = os.path.join(name[0], name[1])
@@ -136,17 +137,22 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
         img = np.array(Image.open(img_path), dtype=np.uint8) #np.ndarray of (HWC)
         lbl = Image.open(lbl_path)
         lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8), dataset_type)
-        lbl_temp = np.load(lbl_temp_path).astype(np.float32).transpose(1,2,0) #np.ndarray of (HWC)
+        lbl_seg = np.load(lbl_seg_path).astype(np.float32).transpose(1,2,0) #np.ndarray of (HWC)
 
         if self.augmentations is not None:
-            img, lbl, lbl_temp = self.augmentations(img, lbl, lbl_temp)
+            img, lbl, lbl_seg = self.augmentations(img, lbl, lbl_seg)
 
         if self.is_transform:
-            img, lbl, lbl_temp = self.transform(img, lbl, lbl_temp, index) # normalisation, transposing, convert to tensor
+            img, lbl, lbl_seg = self.transform(img, lbl, lbl_seg, index) # normalisation, transposing, convert to tensor
 
-        return img, (lbl, lbl_temp), name
+        lbl_dict = {
+            "seg": lbl,
+            "softmax": lbl_seg
+        }
 
-    def transform(self, img, lbl, lbl_temp, index):
+        return img, lbl_dict, name
+
+    def transform(self, img, lbl, lbl_seg, index):
         """ perform standardisation and resizing """
 
         img = np.array(Image.fromarray(img).resize(
@@ -171,15 +177,15 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
             print(self.n_classes, index)
             raise ValueError("Segmentation map contained invalid class values")
 
-        lbl_temp = HeatmapsOnImage(lbl_temp, shape = lbl_temp.shape)
-        lbl_temp = self.softmax_resize_seq(heatmaps = lbl_temp).get_arr()
-        lbl_temp = lbl_temp.transpose(2, 0, 1)
+        lbl_seg = HeatmapsOnImage(lbl_seg, shape = lbl_seg.shape)
+        lbl_seg = self.softmax_resize_seq(heatmaps = lbl_seg).get_arr()
+        lbl_seg = lbl_seg.transpose(2, 0, 1)
 
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
-        lbl_temp = torch.from_numpy(lbl_temp).float()
+        lbl_seg = torch.from_numpy(lbl_seg).float()
 
-        return img, lbl, lbl_temp
+        return img, lbl, lbl_seg
     
     def extract_ignore_mask(self, image, device=None):
         """ Retrieve loss weights to zero padded portions of image/predictions 
