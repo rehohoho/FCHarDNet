@@ -26,7 +26,8 @@ training:
         momentum: 0.9
     softmax_loss:
         name: 'soft_and_hard_target_cross_entropy'
-        temperature: 10.0
+        temperature: 10.0 # see http://cs230.stanford.edu/files_winter_2018/projects/6940224.pdf for experimental data
+        alpha: 0.95
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 500

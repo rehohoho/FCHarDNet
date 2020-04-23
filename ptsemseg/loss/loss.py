@@ -78,7 +78,7 @@ def bootstrapped_cross_entropy2d(input, target, min_K, loss_th, weight=None, siz
     return loss / float(batch_size)
 
 
-def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperature, ignore_mask, weight=None):
+def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperature, ignore_mask, weight=None, alpha=0.5):
 
     n, c, h, w = input.size()
     n_softtar, c_softtar, h_softtar, w_softtar = soft_target.size()
@@ -96,7 +96,7 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
     def _soft_and_hard_xentropy_single(
         hard_input, hard_target, 
         soft_input, soft_target, ignore_mask, 
-        weight=None):
+        weight=None, alpha=0.5):
         
         n, c, h, w = hard_input.size()
         hard_input = hard_input.transpose(1, 2).transpose(2, 3).contiguous().view(-1, c) # CHW -> HWC -> NC
@@ -124,7 +124,8 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
             soft_target=torch.unsqueeze(soft_target[i], 0),
             ignore_mask=ignore_mask[i]
         )
-        soft_target_loss *= 10 * temperature * temperature
+        hard_target_loss *= (1-alpha)
+        soft_target_loss *= alpha * temperature * temperature
         loss += hard_target_loss + soft_target_loss
         
     return loss / float(batch_size)
