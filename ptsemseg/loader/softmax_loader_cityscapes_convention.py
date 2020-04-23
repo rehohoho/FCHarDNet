@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+from scipy.special import softmax
 import glob
 
 from PIL import Image
@@ -94,6 +95,8 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
                 os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
 
         self.ignore_index = 250
+        assert 'softmax_temperature' in config
+        self.softmax_temperature = config['softmax_temperature']
         self.label_handler = label_handler(self.ignore_index)
         
         if not self.files[split]:
@@ -116,7 +119,7 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
         """
         img_path = self.files[self.split][index].rstrip()
         lbl_path = img_path.replace('images', 'seg')
-        lbl_seg_path = img_path.replace('images', 'softmax_temp')
+        lbl_seg_path = img_path.replace('images', 'logits')
         dataset_type = img_path.split(self.root)[-1].split(os.sep)[0]
 
         if dataset_type == 'mapillary':
@@ -137,7 +140,8 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
         img = np.array(Image.open(img_path), dtype=np.uint8) #np.ndarray of (HWC)
         lbl = Image.open(lbl_path)
         lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8), dataset_type)
-        lbl_seg = np.load(lbl_seg_path).astype(np.float32).transpose(1,2,0) #np.ndarray of (HWC)
+        lbl_seg = np.load(lbl_seg_path).transpose(1,2,0).astype(np.float32)
+        lbl_seg = softmax(lbl_seg/self.softmax_temperature, axis = 2)
 
         if self.augmentations is not None:
             img, lbl, lbl_seg = self.augmentations(img, lbl, lbl_seg)

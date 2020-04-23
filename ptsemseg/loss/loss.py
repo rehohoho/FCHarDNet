@@ -124,7 +124,7 @@ def soft_and_hard_target_cross_entropy(input, hard_target, soft_target, temperat
             soft_target=torch.unsqueeze(soft_target[i], 0),
             ignore_mask=ignore_mask[i]
         )
-        soft_target_loss *= 1000
+        soft_target_loss *= 10 * temperature * temperature
         loss += hard_target_loss + soft_target_loss
         
     return loss / float(batch_size)

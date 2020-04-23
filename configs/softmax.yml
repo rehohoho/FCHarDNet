@@ -9,6 +9,7 @@ data:
     img_cols: 513
     path: D:/data/
     sbd_path: /mnt/ssd2/Cityscapes/
+    softmax_temperature: 10.0
 training:
     train_iters: 500
     batch_size: 1
@@ -25,7 +26,7 @@ training:
         momentum: 0.9
     softmax_loss:
         name: 'soft_and_hard_target_cross_entropy'
-        temperature: 10
+        temperature: 10.0
     lr_schedule: 
         name: 'poly_lr'
         max_iter: 500

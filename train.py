@@ -82,7 +82,7 @@ def compute_loss(loss_dict, images, label_dict, output_dict, device, t_loader):
         if loss_name == "softmax_loss":
             loss += loss_fn(input = output_dict["seg"], hard_target = label_dict["seg"].to(device), 
                 soft_target = label_dict["softmax"].to(device), 
-                ignore_mask = t_loader.extract_ignore_mask(images).to(device)
+                ignore_mask = t_loader.extract_ignore_mask(images, device).to(device)
             )
         else:
             loss += loss_fn(input = output_dict[k], target = label_dict[k].to(device))
