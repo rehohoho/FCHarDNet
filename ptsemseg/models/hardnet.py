@@ -172,12 +172,11 @@ class hardnet(nn.Module):
     def _freeze_layers(self, freeze):
         
         modules_to_freeze = []
-        if 'hardnet' in freeze:
-            modules_to_freeze += [self.base, self.transUpBlocks, self.conv1x1_up, self.denseBlocksUp, self.finalConv]
-        if 'bin_classifiers' in freeze:
-            modules_to_freeze += [self.bin_classifiers]
-        if 'classifiers' in freeze:
-            modules_to_freeze += [self.classifiers]
+        for module in freeze:
+            if module == 'hardnet':
+                modules_to_freeze += [self.base, self.transUpBlocks, self.conv1x1_up, self.denseBlocksUp, self.finalConv]
+            if module in self.classifiers.keys():
+                modules_to_freeze += [self.classifiers[module]]
         
         for module in modules_to_freeze:
             if isinstance(module, nn.ModuleList):
@@ -196,7 +195,7 @@ class hardnet(nn.Module):
         
         print('Number of frozen layers: %d, Number of active layers: %d' %(n_frozen, n_not_frozen))
 
-    def __init__(self, n_classes=19, bin_classifiers=None, classifiers=None, freeze = []):
+    def __init__(self, n_classes=19, classifiers=None, freeze = []):
         super(hardnet, self).__init__()
 
         first_ch  = [16,24,32,48]           # downsampling conv channels
@@ -267,7 +266,6 @@ class hardnet(nn.Module):
                out_channels=n_classes, kernel_size=1, stride=1,
                padding=0, bias=True)
                
-        self.bin_classifiers = self._init_classifier_head(bin_classifiers)
         self.classifiers = self._init_classifier_head(classifiers)
         self._freeze_layers(freeze)
 
@@ -295,7 +293,6 @@ class hardnet(nn.Module):
                 skip_connections.append(x)
         out = x
 
-        self._append_classifier_head_output(out_dict, self.bin_classifiers, out)
         self._append_classifier_head_output(out_dict, self.classifiers, out)
         
         for i in range(self.n_blocks):

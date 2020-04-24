@@ -1,6 +1,6 @@
 model:
     arch: hardnet
-    freeze: ['hardnet'] # portion of model to freeze: hardnet, bin_classifiers, classifiers
+    freeze: ['hardnet'] # portion of model to freeze: hardnet, classifier names
     classifiers: # !!name of head has to match in model, data and loss
         environment: # multihead classifier
             neurons: [] # hidden layer configuration, empty list means no hidden layer
