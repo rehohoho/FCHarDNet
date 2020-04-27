@@ -21,6 +21,13 @@ class runningScoreSeg(object):
         for lt, lp in zip(label_trues, label_preds):
             self.confusion_matrix += self._fast_hist(lt.flatten(), lp.flatten(), self.n_classes)
 
+    def get_image_score(self, label_trues, label_preds):
+
+        hist = self._fast_hist(label_trues.flatten(), label_preds.flatten(), self.n_classes)
+        acc = np.diag(hist).sum() / hist.sum()
+
+        return acc
+
     def get_scores(self):
         """Returns accuracy score evaluation result.
             - overall accuracy

@@ -119,10 +119,6 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
     # Setup Dataloader
     data_loader = get_loader(cfg["data"]["dataset"])
     data_path = cfg["data"]["path"]
-    if "version" in cfg["data"]:
-        version = cfg["data"]["version"]
-    else:
-        version = "cityscapes"
 
     t_loader = data_loader(
         data_path,
@@ -278,10 +274,10 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
                 "train_iters"
             ]:
                 torch.cuda.empty_cache()
-                model.eval()
+                model.eval() # set batchnorm and dropouts to work in eval mode
                 loss_all = 0
                 loss_n = 0
-                with torch.no_grad():
+                with torch.no_grad(): # Deactivate torch autograd engine, less memusage
                     for i_val, (images_val, label_dict_val, _) in tqdm(enumerate(valloader)):
                         
                         images_val = images_val.to(device)
@@ -294,7 +290,7 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
 
                         for name, metrics in running_metrics_val.items():
                             gt_array = label_dict_val[name].data.cpu().numpy()
-                            if name+'_loss' in cfg['training'] and cfg['training'][name+'_loss']['name'] == 'l1':
+                            if name+'_loss' in cfg['training'] and cfg['training'][name+'_loss']['name'] == 'l1':  # for binary classification
                                 pred_array = output_dict[name].data.cpu().numpy()
                                 pred_array = np.sign(pred_array)
                                 pred_array[pred_array == -1] = 0

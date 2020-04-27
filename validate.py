@@ -1,11 +1,10 @@
 import yaml
 import torch
 import argparse
-import timeit
 import time
 import os
 import numpy as np
-import imageio
+from PIL import Image
 
 from torch.utils import data
 from torchstat import stat
@@ -13,16 +12,25 @@ from pytorch_bn_fusion.bn_fusion import fuse_bn_recursively
 
 from ptsemseg.models import get_model
 from ptsemseg.loader import get_loader
-from ptsemseg.metrics import runningScoreSeg
-from ptsemseg.utils import convert_state_dict
+from ptsemseg.metrics import runningScoreSeg, runningScoreClassifier
+from ptsemseg.utils import convert_state_dict, get_cityscapes_image_from_tensor
 from ptsemseg.augmentations import get_composed_augmentations, get_composed_augmentations_softmax
 
 torch.backends.cudnn.benchmark = True
+
 
 def reset_batchnorm(m):
     if isinstance(m, torch.nn.BatchNorm2d):
       m.reset_running_stats()
       m.momentum = None
+
+
+def save_image(img, save_path):
+    save_path_dir = os.path.dirname(save_path)
+    if not os.path.exists(save_path_dir):
+        os.makedirs(save_path_dir)
+    img.save(save_path)
+
 
 def validate(cfg, args):
 
@@ -41,41 +49,41 @@ def validate(cfg, args):
     data_loader = get_loader(cfg["data"]["dataset"])
     data_path = cfg["data"]["path"]
 
-    if "version" in cfg["data"]:
-        version = cfg["data"]["version"]
-    else:
-        version = "cityscapes"
-
     loader = data_loader(
         data_path,
+        config = cfg["data"],
         is_transform=True,
         split=cfg["data"]["val_split"],
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
         augmentations=data_aug,
-        version=version,
     )
-
     n_classes = loader.n_classes
-
     valloader = data.DataLoader(loader, batch_size=1, num_workers=1)
-    running_metrics = runningScoreSeg(n_classes)
+    
+    # Setup Metrics
+    running_metrics_val = {"seg": runningScoreSeg(n_classes)}
+    if "classifiers" in cfg["data"]:
+        for name, classes in cfg["data"]["classifiers"].items():
+            running_metrics_val[name] = runningScoreClassifier( len(classes) )
+    if "bin_classifiers" in cfg["data"]:
+        for name, classes in cfg["data"]["bin_classifiers"].items():
+            running_metrics_val[name] = runningScoreClassifier(2)
 
     # Setup Model
-
     model = get_model(cfg["model"], n_classes).to(device)
-    state = convert_state_dict(torch.load(args.model_path)["model_state"])
-    model.load_state_dict(state)
+    state = torch.load(args.model_path)["model_state"]
+    state = convert_state_dict(state) # converts from dataParallel module to normal module
+    model.load_state_dict(state, strict=False)
     
     if args.bn_fusion:
       model = fuse_bn_recursively(model)
-      print(model)
     
     if args.update_bn:
       print("Reset BatchNorm and recalculate mean/var")
       model.apply(reset_batchnorm)
       model.train()
     else:
-      model.eval()
+      model.eval() # set batchnorm and dropouts to work in eval mode
     model.to(device)
     total_time = 0
     
@@ -87,128 +95,125 @@ def validate(cfg, args):
 
     with open(args.output_csv_path, 'a') as output_csv:
 
-        output_csv.write('filename,miou,fps\n')
+        output_csv.write('filename,fps,miou,acc\n')
 
-        for i, (images, labels, fname) in enumerate(valloader):
-            start_time = timeit.default_timer()
-
+        for i, (images, label_dict, fname) in enumerate(valloader):
             images = images.to(device)
-            
-            if i == 0:
-                with torch.no_grad():
-                    outputs = model(images)        
             
             torch.cuda.synchronize()
             start_time = time.perf_counter()
-
-            with torch.no_grad():
-                outputs = model(images)
-
+            with torch.no_grad(): # deactivates autograd engine, less mem usage
+                output_dict = model(images)
             torch.cuda.synchronize()
             elapsed_time = time.perf_counter() - start_time
             
             if args.save_image:
-                pred = np.squeeze(outputs.data.max(1)[1].cpu().numpy(), axis=0)
+                pred = np.squeeze(output_dict["seg"].data.max(1)[1].cpu().numpy(), axis=0)
                 
-                decoded = loader.decode_segmap_id(pred)
-                dir = "./out_predID/"
-                if not os.path.exists(dir):
-                    os.mkdir(dir)
-                    imageio.imwrite(dir+fname[0], decoded)
+                decoded = loader.decode_segmap(loader.decode_segmap_id(pred)) # visualisation of mask
+                mask = get_cityscapes_image_from_tensor(decoded, mask=True)
+                save_path = os.path.join(args.output_path+"_out_predID", fname[0])
+                save_image(img = mask, save_path = save_path)
 
-                decoded = loader.decode_segmap(pred)
-                img_input = np.squeeze(images.cpu().numpy(),axis=0)
-                img_input = img_input.transpose(1, 2, 0)
-                blend = img_input * 0.2 + decoded * 0.8
-                fname_new = fname[0]
-                fname_new = fname_new[:-4]
-                fname_new += '.jpg'
-                dir = "./out_rgb/"
-                
-                if not os.path.exists(dir):
-                    os.mkdir(dir)
-                if not os.path.exists(os.path.join(dir, fname_new.split(os.sep)[0])):
-                    os.mkdir( os.path.join(dir, fname_new.split(os.sep)[0]) )
-                imageio.imwrite(dir+fname_new, blend)
+                img_input = np.squeeze(images.cpu().numpy(),axis=0).transpose(1, 2, 0) # mask overlay image
+                img = get_cityscapes_image_from_tensor(img_input)
+                img = Image.blend(img, mask, alpha=0.5)
+                save_path = os.path.join(args.output_path+"_out_rgb", "%s.jpg" %fname[0][:-4])
+                save_image(img = img, save_path = save_path)
+            
+            image_score = []
+            
+            for name, metrics in running_metrics_val.items(): # update running metrics and record imagewise metrics
+                gt_array = label_dict[name].data.cpu().numpy()
+                if name+'_loss' in cfg['training'] and cfg['training'][name+'_loss']['name'] == 'l1': # for binary classification
+                    pred_array = output_dict[name].data.cpu().numpy()
+                    pred_array = np.sign(pred_array)
+                    pred_array[pred_array == -1] = 0
+                    gt_array[gt_array == -1] = 0
+                else:
+                    pred_array = output_dict[name].data.max(1)[1].cpu().numpy()
 
-            pred = outputs.data.max(1)[1].cpu().numpy()
-            gt = labels.numpy()
-            s = np.sum(gt==pred) / (cfg["data"]["img_rows"] * cfg["data"]["img_cols"] - np.sum(gt == 250)) # consider ignore label == 250
+                metrics.update(gt_array, pred_array)
+                image_score.append( "{0:3.5f}".format(
+                    metrics.get_image_score(gt_array, pred_array)
+                ))
+
+            output_csv.write( '%s, %.4f, %s\n' %(fname[0], 1 / elapsed_time, ",".join(image_score)) ) # record imagewise metrics
 
             if args.measure_time:
                 total_time += elapsed_time
                 print(
-                    "Inference time \
-                    (iter {0:5d}): {1:4f}, {2:3.5f} fps".format(
-                        i + 1, s,1 / elapsed_time
+                    "Iter {0:5d}: {1:3.5f} fps {2}".format(
+                        i + 1, 1 / elapsed_time, " ".join(image_score)
                     )
                 )
-            
-            output_csv.write( '%s, %.4f, %.4f\n' %(fname[0], s, 1 / elapsed_time) )
 
-            running_metrics.update(gt, pred)
-
-    score, class_iou = running_metrics.get_scores()
-    print("Total Frame Rate = %.2f fps" %(500/total_time ))
+    print("Total Frame Rate = %.2f fps" %(i/total_time ))
 
     if args.update_bn:
-      model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
-      state2 = {"model_state": model.state_dict()}
-      torch.save(state2, 'hardnet_cityscapes_mod.pth')
+        model = torch.nn.DataParallel(model, device_ids=range(torch.cuda.device_count()))
+        state2 = {"model_state": model.state_dict()}
+        torch.save(state2, 'hardnet_cityscapes_mod.pth')
 
-    with open(args.miou_logs_path, 'a') as main_output_csv:
+    with open(args.miou_logs_path, 'a') as main_output_csv: # record overall metrics
         main_output_csv.write( '%s\n' %args.output_csv_path )
 
-        for k, v in score.items():
-            print(k, v)
-            main_output_csv.write( '%s,%s\n' %(k,v) )
+        for name, metrics in running_metrics_val.items():
+            overall, classwise = metrics.get_scores()
+            
+            for k, v in overall.items():
+                print("{}_{}: {}".format(name, k, v))
+                main_output_csv.write("%s,%s,%s\n" %(name, k, v))
 
-        for i in range(n_classes):
-            print(i, class_iou[i])
-            main_output_csv.write( '%s,%s\n' %(i, class_iou[i]) )
+            for metric_name, metric in classwise.items():
+                for k, v in metric.items():
+                    print("{}_{}_{}: {}\n".format(name, metric_name, k, v))
+                    main_output_csv.write( "%s,%s,%s,%s\n" %(name, metric_name, k, v))
 
 
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser(description="Hyperparams")
+    
     parser.add_argument(
-        "--config",
-        nargs="?",
+        "--model_config",
         type=str,
         default="configs/hardnet.yml",
-        help="Config file to be used",
+        help="Config file corresponding to model. Required to build model.",
     )
     parser.add_argument(
         "--model_path",
-        nargs="?",
         type=str,
-        default="hardnet_cityscapes_best_model.pkl",
+        default="weights/hardnet70_cityscapes_model.pkl",
         help="Path to the saved model",
     )
-    
+    parser.add_argument(
+        "--aug_configs",
+        type=str,
+        default=None,
+        help="Directory of configs or config containing augmentation strategy to apply."
+    )
+    parser.add_argument(
+        "--output_path",
+        type=str,
+        default=None,
+        help="Path to output logs and images"
+    )
     parser.add_argument(
         "--measure_time",
-        dest="measure_time",
         action="store_true",
+        default=False,
         help="Enable evaluation with time (fps) measurement |\
                               True by default",
     )
     parser.add_argument(
-        "--no-measure_time",
-        dest="measure_time",
-        action="store_false",
-        help="Disable evaluation with time (fps) measurement",
-    )
-    parser.set_defaults(measure_time=True)
-
-    parser.add_argument(
         "--save_image",
-        dest="save_image",
         action="store_true",
+        default=False,
         help="Enable saving inference result image into out_img/ |\
                               False by default",
     )
-    parser.set_defaults(save_image=False)
-    
+
     parser.add_argument(
         "--update_bn",
         dest="update_bn",
@@ -229,25 +234,43 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if not args.config.endswith('yml'):
-        cfgs = os.listdir(args.config)
+    # Setup model and augmentation configs
+    with open(args.model_config) as fp:
+        model_cfg = yaml.load(fp)
+    
+    if not args.aug_configs.endswith('yml'):
+        aug_cfgs = os.listdir(args.aug_configs)
     else:
-        cfgs = [args.config]
+        aug_cfgs = [args.aug_configs]
+    
+    # Setup main logging paths
+    if args.output_path is None:
+        base_output_path = os.path.join(
+            os.path.dirname(args.model_path),
+            os.path.splitext(os.path.basename(args.model_path))[0]
+        )
+    else:
+        base_output_path = args.output_path
+    if not os.path.exists(base_output_path):
+        os.makedirs(base_output_path)
+    args.miou_logs_path = os.path.join(base_output_path, 'overall_miou_logs.csv')
 
-    args.miou_logs_path = os.path.join(
-        os.path.dirname(args.model_path),
-        'overall_miou_logs.csv'
-    )
-
-    for cfg_filename in cfgs:
+    for aug_cfg_filename in aug_cfgs:
         
-        cfg_filename = os.path.join(args.config, cfg_filename)
-
-        with open(cfg_filename) as fp:
-            cfg = yaml.load(fp)
+        aug_cfg_filename = os.path.join(args.aug_configs, aug_cfg_filename)
+        with open(aug_cfg_filename) as fp:
+            aug_cfg = yaml.load(fp)
         
+        cfg = dict(model_cfg)
+        if "validation" in aug_cfg:
+            cfg.update({"validation": aug_cfg["validation"]})
+
         args.output_csv_path = os.path.join(
-            os.path.dirname(args.model_path), 
-            'perimage_logs_%s.csv' %os.path.basename(cfg_filename)[:-4]
+            base_output_path,
+            'perimage_logs_%s.csv' %os.path.basename(aug_cfg_filename)[:-4]
+        )
+        args.output_path = os.path.join(
+            base_output_path,
+            os.path.basename(aug_cfg_filename)[:-4]
         )
         validate(cfg, args)
