@@ -63,18 +63,14 @@ class DataLoader():
 
         data_loader = get_loader(cfg_data["dataset"])
         data_path = cfg_data["path"]
-        if "version" in cfg_data:
-            version = cfg_data["version"]
-        else:
-            version = "cityscapes"
 
         self.t_loader = data_loader(
             data_path,
+            config = cfg_data,
             is_transform=True,
             split=cfg_data[self.dataset_split],
             img_size=(cfg_data["img_rows"], cfg_data["img_cols"]),
             augmentations=self.data_aug,
-            version=version,
         )
         
         n_classes = self.t_loader.n_classes
@@ -94,17 +90,27 @@ class DataLoader():
         ]
 
     def save_augmented_images(self, vis = False):
+        """ Saves different files depending on vis as follows
+        vis == True
+            - rgb png file
+            - visualised mask png file
+            - visualised argmaxed softmax png file
+            - visualised ignore mask png file
+        vis == False
+            - rgb npy file
+            - mask npy file
+            - softmax npy file
+        """
 
-        for (images, labels, name) in self.train_loader:
+        for (images, label_dict, name) in self.train_loader:
             
             print(name)
 
-            if self.dataloader_type == "softmax_cityscapes_convention":
-                labels, softmax = labels
-                softmax_array = softmax.data.cpu().numpy()
+            if "softmax" in label_dict:
+                softmax_array = label_dict["softmax"].data.cpu().numpy()
 
             image_array = images.data.cpu().numpy()
-            label_array = labels.data.cpu().numpy()
+            label_array = label_dict["seg"].data.cpu().numpy()
             
             if vis:
                 file_type = ".png"
@@ -112,7 +118,7 @@ class DataLoader():
                 image_array = image_array.transpose(0, 2, 3, 1)
                 label_array = [self.t_loader.decode_segmap(i) for i in label_array]
 
-                if self.dataloader_type == "softmax_cityscapes_convention": 
+                if "softmax" in label_dict:
                     softmax_array = np.argmax(softmax_array, axis = 1)
                     softmax_array = [self.t_loader.decode_segmap(i) for i in softmax_array]
                     
@@ -130,7 +136,7 @@ class DataLoader():
             save_batch_noreplace(img_path, image_array)
             save_batch_noreplace(lbl_path, label_array, mask=True)
             
-            if self.dataloader_type == "softmax_cityscapes_convention":
+            if "softmax" in label_dict:
                 sftmax_path = self.get_save_path_names(name, "softmax", file_type)
                 save_batch_noreplace(sftmax_path, softmax_array, mask=True)
         
@@ -177,7 +183,7 @@ if __name__ == "__main__":
     save_paths = {
         "image": [i for i in save_paths_list if "image" in i][0],
         "label": [i for i in save_paths_list if "seg" in i][0],
-        "softmax": [i for i in save_paths_list if "softmax" in i][0]
+        "softmax": [i for i in save_paths_list if "logits" in i][0]
     }
 
     data_loader = DataLoader(cfg, args.dataset_split, save_paths)

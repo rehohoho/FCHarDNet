@@ -63,30 +63,25 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         "cityscapes": [0.0, 0.0, 0.0],
     }  # pascal mean for PSPNet and ICNet pre-trained model
 
+    image_suffix = {
+        'cityscapes': ('_leftImg8bit.png', '_gtFine_labelIds.png'),
+        'mapillary': ('.jpg', '.png'),
+        'bdd100k': ('.jpg', '_train_id.png'),
+        'scooter': ('.png', '.png'),
+        'detector': ('.png', '.png')
+    } # to search for image / label / softmax files
+
     def _init_get_files(self, datasets):
         self.files[self.split] = []
 
-        if 'cityscapes' in datasets:
+        for dataset_type in datasets:
+            file_suffix = [v for k, v in self.image_suffix.items() if k in dataset_type]
+            assert len(file_suffix) == 1, 'Dataset type not specified properly. %s found.' %[k for k in self.image_suffix.keys() if k in dataset_type]
+
             self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'cityscapes/*images', self.split, '**/*leftImg8bit.png')) ]
-        if 'scooter' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter/*images', self.split, '**/*.png')) ]
-        if 'scooter_small' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_small/*images', self.split, '**/*.png')) ]
-        if 'scooter_halflabelled' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_halflabelled/*images', self.split, '**/*.png')) ]
-        if 'mapillary' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'mapillary/*images', self.split, '*.jpg')) ]
-        if 'bdd100k' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'bdd100k/*images', self.split, '**.jpg')) ]
-        if 'detector' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'detector/*images', self.split, '**/*.png'), recursive=True) ]
+                os.path.join(self.root, '%s/*images' %dataset_type, self.split, '**/*'+file_suffix[0][0]),
+                recursive = True
+            )]
     
     def _init_classifier_head_labels(self, config, classifier_type):
 
@@ -97,7 +92,6 @@ class BaseLoaderCityscapesConvention(data.Dataset):
             labels[name] = label
         
         return (True, labels)
-
 
     def __init__(
         self,
@@ -141,6 +135,15 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         """__len__"""
         return len(self.files[self.split])
 
+    def _get_corresponding_label(self, img_path, dataset_type, subfolder_name):
+        
+        suffix_replace = [v for k, v in self.image_suffix.items() if k in dataset_type]
+        assert len(suffix_replace) == 1, 'Dataset type not specified properly. %s found.' %[k for k in self.image_suffix.keys() if k in dataset_type]
+        lbl_path = img_path.replace(suffix_replace[0][0], suffix_replace[0][1])
+        lbl_path = lbl_path.replace('images', subfolder_name)
+
+        return lbl_path
+    
     def __getitem__(self, index):
         """__getitem__
 
@@ -148,15 +151,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         """
         img_path = self.files[self.split][index].rstrip()
         dataset_type = img_path.split(self.root)[-1].split(os.sep)[0]
-        
-        if dataset_type == 'mapillary':
-            lbl_path = img_path.replace('images', 'seg').replace('.jpg', '.png')
-        elif dataset_type == 'bdd100k':
-            lbl_path = img_path.replace('images','label').replace('.jpg', '_train_id.png')
-        elif dataset_type == 'cityscapes':
-            lbl_path = img_path.replace('images','seg').replace('_leftImg8bit.png','_gtFine_labelIds.png')
-        elif dataset_type == 'scooter' or 'scooter_small' or 'scooter_halflabelled' or 'detector':
-            lbl_path = img_path.replace('images','seg')
+        lbl_path = self._get_corresponding_label(img_path, dataset_type, 'seg')
         
         name = img_path.split(os.sep)[-2:]
         name = os.path.join(name[0], name[1])

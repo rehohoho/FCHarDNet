@@ -2,7 +2,7 @@ model:
     arch: hardnet
 data:
     dataset: softmax_direct_load
-    version: scooter_halflabelled
+    version: scooter_halflabelled_aug
     train_split: train
     val_split: val
     img_rows: 513
@@ -10,7 +10,7 @@ data:
     path: D:/data/
     sbd_path: /mnt/ssd2/Cityscapes/
 training:
-    train_iters: 180000
+    train_iters: 500
     batch_size: 2
     val_interval: 20
     n_workers: 2
@@ -21,11 +21,13 @@ training:
         lr: 0.002
         weight_decay: 0.0005
         momentum: 0.9
-    loss:
+    softmax_loss:
         name: 'soft_and_hard_target_cross_entropy'
-        temperature: 10
+        temperature: 10.0 # see http://cs230.stanford.edu/files_winter_2018/projects/6940224.pdf for experimental data
+        alpha: 0.95
     lr_schedule: 
         name: 'poly_lr'
-        max_iter: 180000
+        max_iter: 500
     resume: D:/repos/fchardnet/weights/hardnet70_cityscapes_model.pkl
     finetune: None    
+    save_metric: "Mean IoU : \t" # "Mean IoU : \t" for seg, "Overall Accuracy: \t" for classifier

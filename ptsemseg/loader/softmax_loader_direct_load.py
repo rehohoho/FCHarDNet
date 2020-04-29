@@ -14,6 +14,10 @@ from imgaug.augmentables.heatmaps import HeatmapsOnImage
 class SoftmaxLoaderDirectLoad(data.Dataset):
     """
     Requires dataset to have subdirectories: *images and *seg and *softmax_temp
+    Expects dataset generated from save_augmented_images.py
+
+    - image, mask, softmax layer should have same base names
+    - labels should be encoded from test to train, according to config used to get dataset
     """
 
     colors = [
@@ -44,43 +48,32 @@ class SoftmaxLoaderDirectLoad(data.Dataset):
         
         self.files[self.split] = []
 
-        if 'cityscapes' in datasets:
+        for dataset_type in datasets:
             self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'cityscapes/*images_aug', self.split, '**/*leftImg8bit.npy')) ]
-        if 'scooter' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter/*images_aug', self.split, '**/*.npy')) ]
-        if 'scooter_small' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_small/*images_aug', self.split, '**/*.npy')) ]
-        if 'scooter_halflabelled' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'scooter_halflabelled/*images_aug', self.split, '**/*.npy')) ]
-        if 'mapillary' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'mapillary/*images_aug', self.split, '*.npy')) ]
-        if 'bdd100k' in datasets:
-            self.files[self.split] += [ file for file in glob.glob(
-                os.path.join(self.root, 'bdd100k/*images_aug', self.split, '**.npy')) ]
+                os.path.join(self.root, '%s/*images' %dataset_type, self.split, '**/*.npy'),
+                recursive = True
+            )]
 
     def __init__(
         self,
         root,
+        config,
         split="train",
         is_transform=False,     # not used
         img_size=(1024, 2048),  # not used
         augmentations=None,     # not used
-        version="cityscapes",
         test_mode=False,
     ):
-        print("\n[LOADER] Direct loader is used. No standardisation, transform, and augmentations applied.")
+        print("[LOADER] Direct loader is used. No standardisation, transform, and augmentations applied.")
+        print("[LOADER] This loader expects dataset generated from save_augmented_images.py")
 
         self.root = root
         self.split = split
         self.n_classes = 19
         self.files = {}
 
-        datasets = version.replace(' ', '').split(',')
+        assert 'version' in config
+        datasets = config['version'].replace(' ', '').split(',')
         print('Datasets used:', datasets)
 
         self._init_get_files(datasets)
@@ -101,25 +94,15 @@ class SoftmaxLoaderDirectLoad(data.Dataset):
         :param index:
         """
         img_path = self.files[self.split][index].rstrip()
-        lbl_path = img_path.replace('images', 'seg')
-        lbl_temp_path = img_path.replace('images', 'softmax_temp')
-        dataset_type = img_path.split(self.root)[-1].split(os.sep)[0]   # not a state to allow multiple datasets
-
-        # mapillary and scooter data points does not have different names for images and labels 
-        if dataset_type == 'bdd100k':
-            lbl_path = lbl_path.replace('.npy', '_train_id.npy')
-            lbl_temp_path = lbl_temp_path.replace('.npy', '_train_id.npy')
-        elif dataset_type == 'cityscapes':
-            lbl_path = lbl_path.replace('_leftImg8bit','_gtFine_labelIds')
-            lbl_temp_path = lbl_temp_path.replace('_leftImg8bit','_gtFine_labelIds')
-
+        lbl_path = img_path.replace('images', 'seg') # all datasets have same basenames
+        lbl_seg_path = img_path.replace('images', 'softmax_temp')
+        
         name = img_path.split(os.sep)[-2:]
         name = os.path.join(name[0], name[1])
 
         img = np.load(img_path)
-        lbl = np.load(lbl_path)
-        # lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8), dataset_type)
-        lbl_temp = np.load(lbl_temp_path)
+        lbl = np.load(lbl_path) # labels expected to be encoded, by config used to generate dataset
+        lbl_seg = np.load(lbl_seg_path)
 
         if not np.all(np.unique(lbl[lbl != self.ignore_index]) < self.n_classes):
             print("after det", classes, np.unique(lbl))
@@ -128,20 +111,35 @@ class SoftmaxLoaderDirectLoad(data.Dataset):
 
         img = torch.from_numpy(img).float()
         lbl = torch.from_numpy(lbl).long()
-        lbl_temp = torch.from_numpy(lbl_temp).float()
+        lbl_seg = torch.from_numpy(lbl_seg).float()
 
-        return img, (lbl, lbl_temp), name
+        lbl_dict = {
+            "seg": lbl,
+            "softmax": lbl_seg
+        }
+
+        return img, lbl_dict, name
     
-    def extract_ignore_mask(self, image):
+    def extract_ignore_mask(self, image, device=None):
         """ Retrieve loss weights to zero padded portions of image/predictions 
         weight is repeated to fit shape of input / target in BCELoss
         
         Args:   image           NCHW tensor
         Return: ignore_mask     NHW tensor
         """
-        
-        padded_single_channel = torch.sum(image, dim=1)
-        
+
+        std = torch.Tensor([57.375, 57.120000000000005, 58.395])
+        mean = torch.Tensor([103.53, 116.28, 123.675])
+        if device is not None:
+            std = std.to(device)
+            mean = mean.to(device)
+
+        image_hwc = image.transpose(1,2).transpose(2,3)
+        image_hwc = image_hwc * std + mean
+        image_hwc = image_hwc.type(torch.cuda.LongTensor)
+
+        padded_single_channel = torch.sum(image_hwc, dim=3)
+
         ignore_mask = torch.where(
             padded_single_channel == 0,
             padded_single_channel,
@@ -149,17 +147,6 @@ class SoftmaxLoaderDirectLoad(data.Dataset):
         )
         
         return ignore_mask
-
-    def encode_segmap(self, mask, dataset_type):
-        # Put all void classes to zero
-        if dataset_type == 'cityscapes':
-            mask = self.label_handler.label_cityscapes(mask)
-        if dataset_type == 'mapillary':
-            mask = self.label_handler.label_mapillary(mask)
-        if dataset_type == 'bdd100k':
-            mask[mask==255] = self.ignore_index
-        
-        return mask
 
     # used for logging or testing in __main__ only, fixed to cityscapes convention
     def decode_segmap(self, temp):

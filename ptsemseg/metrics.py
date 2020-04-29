@@ -45,7 +45,7 @@ class runningScoreSeg(object):
         # diag is intersection, sum across horizontal and vertical is union
         iu = np.diag(hist) / (hist.sum(axis=1) + hist.sum(axis=0) - np.diag(hist))
         mean_iu = np.nanmean(iu)
-        freq = hist.sum(axis=1) / hist.sum()
+        freq = hist.sum(axis=1) / hist.sum() # number of ground truths pixels for each class
         fwavacc = (freq[freq > 0] * iu[freq > 0]).sum()
         cls_iu = dict(zip(range(self.n_classes), iu))
 
@@ -53,7 +53,7 @@ class runningScoreSeg(object):
             {
                 "Overall Acc: \t": acc, # pixel accuracy
                 "Mean Acc : \t": acc_cls, # mean class precision
-                "FreqW Acc : \t": fwavacc,
+                "FreqW Acc : \t": fwavacc, # weighted mean of IoU, by number of examples
                 "Mean IoU : \t": mean_iu, # mean of IoU
             },
             {
