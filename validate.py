@@ -4,6 +4,7 @@ import argparse
 import time
 import os
 import numpy as np
+from scipy.special import softmax
 from PIL import Image
 
 from torch.utils import data
@@ -25,11 +26,31 @@ def reset_batchnorm(m):
       m.momentum = None
 
 
-def save_image(img, save_path):
+def save_image(images, output_dict, fname, output_path, loader):
+
+    pred = np.squeeze(output_dict["seg"].data.max(1)[1].cpu().numpy(), axis=0)
+    img_input = np.squeeze(images.cpu().numpy(),axis=0).transpose(1, 2, 0) # mask overlay image
+    
+    mask = loader.decode_segmap(loader.decode_segmap_id(pred)) # visualisation of mask
+    mask = get_cityscapes_image_from_tensor(mask, mask=True, get_image_obj = False)
+    img = get_cityscapes_image_from_tensor(img_input, get_image_obj = False)
+    img = np.hstack((img, mask))
+    
+    save_path = os.path.join(output_path+"_images", "%s.jpg" %fname[0][:-4])
     save_path_dir = os.path.dirname(save_path)
     if not os.path.exists(save_path_dir):
         os.makedirs(save_path_dir)
-    img.save(save_path)
+    Image.fromarray(img).save(save_path)
+
+
+def create_overall_logs_header(running_metrics_val):
+    header = ["filename", "fps"]
+    for name in running_metrics_val.keys():
+        header.append(name)
+        if name != "seg":
+            header.append("%s_output" %name)
+    
+    return "%s\n" %(",".join(header))
 
 
 def validate(cfg, args):
@@ -53,7 +74,7 @@ def validate(cfg, args):
         data_path,
         config = cfg["data"],
         is_transform=True,
-        split=cfg["data"]["val_split"],
+        split=cfg["data"][args.dataset_split],
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
         augmentations=data_aug,
     )
@@ -71,7 +92,7 @@ def validate(cfg, args):
 
     # Setup Model
     model = get_model(cfg["model"], n_classes).to(device)
-    state = torch.load(args.model_path)["model_state"]
+    state = torch.load(args.model_path, map_location="cuda:0")["model_state"]
     state = convert_state_dict(state) # converts from dataParallel module to normal module
     model.load_state_dict(state, strict=False)
     
@@ -95,7 +116,7 @@ def validate(cfg, args):
 
     with open(args.output_csv_path, 'a') as output_csv:
 
-        output_csv.write('filename,fps,miou,acc\n')
+        output_csv.write(create_overall_logs_header(running_metrics_val))
 
         for i, (images, label_dict, fname) in enumerate(valloader):
             images = images.to(device)
@@ -108,15 +129,7 @@ def validate(cfg, args):
             elapsed_time = time.perf_counter() - start_time
             
             if args.save_image:
-                pred = np.squeeze(output_dict["seg"].data.max(1)[1].cpu().numpy(), axis=0)
-                img_input = np.squeeze(images.cpu().numpy(),axis=0).transpose(1, 2, 0) # mask overlay image
-                
-                mask = loader.decode_segmap(loader.decode_segmap_id(pred)) # visualisation of mask
-                mask = get_cityscapes_image_from_tensor(mask, mask=True, get_image_obj = False)
-                img = get_cityscapes_image_from_tensor(img_input, get_image_obj = False)
-                img = np.hstack((img, mask))
-                save_path = os.path.join(args.output_path+"_images", "%s.jpg" %fname[0][:-4])
-                save_image(img = Image.fromarray(img), save_path = save_path)
+                save_image(images, output_dict, fname, args.output_path, loader=loader)
             
             image_score = []
             
@@ -130,10 +143,16 @@ def validate(cfg, args):
                 else:
                     pred_array = output_dict[name].data.max(1)[1].cpu().numpy()
 
+                if name == "seg" or name == "softmax":
+                    image_score.append( "%.3f" %metrics.get_image_score(gt_array, pred_array) )
+                else:
+                    imagewise_score = softmax(np.squeeze(
+                        output_dict[name].data.cpu().numpy()
+                    )).round(3)
+                    image_score.append( "%.3f" %(imagewise_score[gt_array[0]]) )
+                    image_score.append( str(imagewise_score) ) # append raw probability results for non-segmentation task
+                
                 metrics.update(gt_array, pred_array)
-                image_score.append( "{0:3.5f}".format(
-                    metrics.get_image_score(gt_array, pred_array)
-                ))
 
             output_csv.write( '%s, %.4f, %s\n' %(fname[0], 1 / elapsed_time, ",".join(image_score)) ) # record imagewise metrics
 
@@ -189,6 +208,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Directory of configs or config containing augmentation strategy to apply."
+    )
+    parser.add_argument(
+        "--dataset_split",
+        type=str,
+        default="val_split",
+        help="train_split or val_split"
     )
     parser.add_argument(
         "--output_path",
