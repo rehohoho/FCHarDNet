@@ -109,17 +109,14 @@ def validate(cfg, args):
             
             if args.save_image:
                 pred = np.squeeze(output_dict["seg"].data.max(1)[1].cpu().numpy(), axis=0)
-                
-                decoded = loader.decode_segmap(loader.decode_segmap_id(pred)) # visualisation of mask
-                mask = get_cityscapes_image_from_tensor(decoded, mask=True)
-                save_path = os.path.join(args.output_path+"_out_predID", fname[0])
-                save_image(img = mask, save_path = save_path)
-
                 img_input = np.squeeze(images.cpu().numpy(),axis=0).transpose(1, 2, 0) # mask overlay image
-                img = get_cityscapes_image_from_tensor(img_input)
-                img = Image.blend(img, mask, alpha=0.5)
-                save_path = os.path.join(args.output_path+"_out_rgb", "%s.jpg" %fname[0][:-4])
-                save_image(img = img, save_path = save_path)
+                
+                mask = loader.decode_segmap(loader.decode_segmap_id(pred)) # visualisation of mask
+                mask = get_cityscapes_image_from_tensor(mask, mask=True, get_image_obj = False)
+                img = get_cityscapes_image_from_tensor(img_input, get_image_obj = False)
+                img = np.hstack((img, mask))
+                save_path = os.path.join(args.output_path+"_images", "%s.jpg" %fname[0][:-4])
+                save_image(img = Image.fromarray(img), save_path = save_path)
             
             image_score = []
             

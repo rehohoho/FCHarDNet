@@ -58,7 +58,7 @@ def get_logger(logdir):
     return logger
 
 
-def get_cityscapes_image_from_tensor(image, mask = False):
+def get_cityscapes_image_from_tensor(image, mask = False, get_image_obj = True):
     """
     Reverse image transformation
         - normalisation for image
@@ -72,7 +72,10 @@ def get_cityscapes_image_from_tensor(image, mask = False):
         std = np.array([57.375, 57.12 , 58.395])
         mean = np.array([103.53 , 116.28 , 123.675])
         image = (image * std + mean)
+        image = image[:, :, ::-1]
     
-    image = Image.fromarray(image.astype(np.uint8))
+    image = image.astype(np.uint8)
+    if get_image_obj:
+        image = Image.fromarray(image)
     
     return image

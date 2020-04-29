@@ -1,5 +1,6 @@
 
-python /home/whizz/Desktop/deeplabv3/FCHarDNet/validate_show_images.py \
-    --dataset_path="/home/whizz/Desktop/deeplabv3/datasets/scooter/scooter_images/val/" \
-    --csv_path="/home/whizz/Desktop/deeplabv3/FCHarDNet/runs/scooter_only_labelled/cur/miou_logs.csv" \
+python ../save_worst_performers.py \
+    --dataset_path="<path-to-validation-logged-images-directory>" \
+    --csv_path="<path-to-validation-logged-imagewise-metrics-csv-file>" \
+    --target_metric="miou" \
     --perc=0.1
