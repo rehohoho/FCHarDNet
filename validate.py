@@ -49,6 +49,7 @@ def create_overall_logs_header(running_metrics_val):
         header.append(name)
         if name != "seg":
             header.append("%s_output" %name)
+            header.append("%s_confusion" %name)
     
     return "%s\n" %(",".join(header))
 
@@ -151,6 +152,7 @@ def validate(cfg, args):
                     )).round(3)
                     image_score.append( "%.3f" %(imagewise_score[gt_array[0]]) )
                     image_score.append( str(imagewise_score) ) # append raw probability results for non-segmentation task
+                    image_score.append( "pred %s label %s" %(np.argmax(imagewise_score), gt_array[0]))
                 
                 metrics.update(gt_array, pred_array)
 
@@ -183,8 +185,14 @@ def validate(cfg, args):
 
             for metric_name, metric in classwise.items():
                 for k, v in metric.items():
-                    print("{}_{}_{}: {}\n".format(name, metric_name, k, v))
+                    print("{}_{}_{}: {}".format(name, metric_name, k, v))
                     main_output_csv.write( "%s,%s,%s,%s\n" %(name, metric_name, k, v))
+            
+            confusion_matrix = np.round(metrics.confusion_matrix, 3)
+            print("confusion matrix:\n%s" %confusion_matrix)
+            main_output_csv.write("%s\n" %(
+                "\n".join(str(i) for i in confusion_matrix)
+            ))
 
 
 if __name__ == "__main__":

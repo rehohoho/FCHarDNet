@@ -9,27 +9,7 @@ from torch.utils import data
 
 from ptsemseg.loader.label_handler.label_handler import label_handler
 from ptsemseg.augmentations import Compose, RandomHorizontallyFlip, RandomRotate, Scale
-
-
-def _get_json_param_value(img_path, json_param):
-
-    dirname = os.path.dirname(img_path)
-    img_basename = os.path.basename(img_path)
-    img_splitname = os.path.splitext(img_basename)[0].split('_')
-
-    json_path = os.path.join(
-        dirname,
-        'measurements_%05d_%s.json' \
-        %(int(img_splitname[1]), img_splitname[2])
-    )
-    
-    with open(json_path, 'r') as measurement_file:
-        measurements = json.load(measurement_file)
-    
-    if json_param not in measurements.keys():
-        print("Json param %s is not found in %s." %(json_param, json_path))
-    
-    return measurements[json_param]
+from ptsemseg.utils import get_json_param_value
 
 
 class BaseLoaderCityscapesConvention(data.Dataset):
@@ -179,7 +159,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         
         if not self.bin_classifiers: return
 
-        json_param_value = _get_json_param_value(img_path, 'path_type')
+        json_param_value = get_json_param_value(img_path, 'path_type')
 
         for name, pos_labels in self.bin_label.items():
             if json_param_value in pos_labels:
@@ -192,7 +172,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         
         if not self.classifiers: return
         
-        json_param_value = _get_json_param_value(img_path, 'path_type')
+        json_param_value = get_json_param_value(img_path, 'path_type')
         
         for name, pos_labels in self.classifier_label.items():
             

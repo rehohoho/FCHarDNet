@@ -6,6 +6,7 @@ import logging
 import datetime
 import numpy as np
 from PIL import Image
+import json
 from collections import OrderedDict
 
 
@@ -79,3 +80,58 @@ def get_cityscapes_image_from_tensor(image, mask = False, get_image_obj = True):
         image = Image.fromarray(image)
     
     return image
+
+
+def get_json_param_value(img_path, json_param):
+
+    dirname = os.path.dirname(img_path)
+    img_basename = os.path.basename(img_path)
+    img_splitname = os.path.splitext(img_basename)[0].split('_')
+
+    json_path = os.path.join(
+        dirname,
+        'measurements_%05d_%s.json' \
+        %(int(img_splitname[1]), img_splitname[2])
+    )
+    
+    with open(json_path, 'r') as measurement_file:
+        measurements = json.load(measurement_file)
+    
+    if json_param not in measurements.keys():
+        print("Json param %s is not found in %s." %(json_param, json_path))
+    
+    return measurements[json_param]
+
+
+def get_sampling_weights(dataset, sampling_cfg):
+    """ Get sampling weights for dataset based on label_name
+    Sampler weights do not have to add up to 1
+
+    Currently sampling strategy only supports balancing of one classiffication metric
+    """
+    assert len(sampling_cfg) == 1, "Sampling function only supports one metric. Metrics: %s" %sampling_cfg.keys()
+    tar_label_name = list(sampling_cfg.keys())[0]
+    
+    if tar_label_name == "seg":
+        # TODO data balancing based on segmentation mask
+        print("Data balancing does not support segmentation mask yet.")
+        return
+
+    if tar_label_name in dataset.bin_label.keys():
+        pos_label = dataset.bin_label[tar_label_name]
+    elif tar_label_name in dataset.classifier_label.keys():
+        pos_label = dataset.classifier_label[tar_label_name]
+    else:
+        print("Target label %s is not found in %s or %s." %(tar_label_name, dataset.bin_label.keys(), dataset.classifier_label.keys()))
+        print("Data sampling balancing only supported for classification labels.")
+        return
+
+    files = dataset.files[dataset.split]
+    labels = []
+
+    for img_path in files:
+        json_param_value = get_json_param_value(img_path.rstrip(), 'path_type')
+        labels.append(pos_label.index(json_param_value))
+
+    class_weights = sampling_cfg[tar_label_name]/np.bincount(labels) # number of samples of each idx
+    return class_weights[labels]

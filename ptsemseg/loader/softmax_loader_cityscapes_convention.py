@@ -248,10 +248,7 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
     
     # used in validation only in saving images
     def decode_segmap_id(self, temp):
-        ids = np.zeros((temp.shape[0], temp.shape[1]),dtype=np.uint8)
-        for l in range(0, self.n_classes):
-            ids[temp == l] = self.valid_classes[l]
-        return ids
+        return temp
 
 
 if __name__ == "__main__":

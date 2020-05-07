@@ -22,6 +22,8 @@ data:
         environment: ['bus_stop', 'junction', 'road_break', 'straight_pavement']
     bin_classifiers: # positive labels only, can have multiple
         stop: ['bus_stop', 'junction', 'road_break']
+    sampling:
+        environment: [1.0, 1.0, 1.0, 1.0]
 training:
     train_iters: 500
     batch_size: 4

@@ -16,7 +16,7 @@ from tqdm import tqdm
 from ptsemseg.models import get_model
 from ptsemseg.loss import get_loss_function
 from ptsemseg.loader import get_loader
-from ptsemseg.utils import get_logger, get_cityscapes_image_from_tensor
+from ptsemseg.utils import get_logger, get_cityscapes_image_from_tensor, get_sampling_weights
 from ptsemseg.metrics import runningScoreSeg, runningScoreClassifier, averageMeter
 from ptsemseg.augmentations import get_composed_augmentations, get_composed_augmentations_softmax
 from ptsemseg.schedulers import get_scheduler
@@ -128,7 +128,6 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
         augmentations=data_aug,
     )
-
     v_loader = data_loader(
         data_path,
         config = cfg["data"],
@@ -137,14 +136,21 @@ def train(cfg, writer, logger, start_iter=0, model_only=False, gpu=-1, save_dir=
         img_size=(cfg["data"]["img_rows"], cfg["data"]["img_cols"]),
     )
 
+    sampler = None
+    if "sampling" in cfg["data"]:
+        sampler = data.WeightedRandomSampler(
+            weights = get_sampling_weights(t_loader, cfg["data"]["sampling"]),
+            num_samples = len(t_loader),
+            replacement = True
+        )
     n_classes = t_loader.n_classes
     trainloader = data.DataLoader(
         t_loader,
         batch_size=cfg["training"]["batch_size"],
         num_workers=cfg["training"]["n_workers"],
-        shuffle=True,
+        sampler=sampler,
+        shuffle=sampler==None,
     )
-
     valloader = data.DataLoader(
         v_loader, batch_size=cfg["training"]["batch_size"], num_workers=cfg["training"]["n_workers"]
     )
