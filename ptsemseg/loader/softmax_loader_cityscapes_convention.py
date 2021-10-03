@@ -101,7 +101,7 @@ class SoftmaxLoaderCityscapesConvention(data.Dataset):
         self.ignore_index = 250
         assert 'softmax_temperature' in config
         self.softmax_temperature = config['softmax_temperature']
-        self.label_handler = label_handler(self.ignore_index)
+        # self.label_handler = label_handler(self.ignore_index)
 
         self.softmax_resize_seq = iaa.Sequential([ # used at transform, to resize to img_size
             iaa.Resize({"height": img_size[0], "width": img_size[1]})

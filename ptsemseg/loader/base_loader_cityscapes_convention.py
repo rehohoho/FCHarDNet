@@ -57,7 +57,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         for dataset_type in datasets:
             file_suffix = [v for k, v in self.image_suffix.items() if k in dataset_type]
             assert len(file_suffix) == 1, 'Dataset type not specified properly. %s found.' %[k for k in self.image_suffix.keys() if k in dataset_type]
-
+            print(os.path.join(self.root, '%s/*images' %dataset_type, self.split, '**/*'+file_suffix[0][0]))
             self.files[self.split] += [ file for file in glob.glob(
                 os.path.join(self.root, '%s/*images' %dataset_type, self.split, '**/*'+file_suffix[0][0]),
                 recursive = True
@@ -106,7 +106,7 @@ class BaseLoaderCityscapesConvention(data.Dataset):
         print("Found %d %s images" % (len(self.files[split]), split))
 
         self.ignore_index = 250
-        self.label_handler = label_handler(self.ignore_index)
+        # self.label_handler = label_handler(self.ignore_index)
 
         self.bin_classifiers, self.bin_label = self._init_classifier_head_labels(config, 'bin_classifiers')
         self.classifiers, self.classifier_label = self._init_classifier_head_labels(config, 'classifiers')

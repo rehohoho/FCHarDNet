@@ -82,7 +82,7 @@ class SoftmaxLoaderDirectLoad(data.Dataset):
         print("Found %d %s images" % (len(self.files[split]), split))
         
         self.ignore_index = 250
-        self.label_handler = label_handler(self.ignore_index)
+        # self.label_handler = label_handler(self.ignore_index)
 
     def __len__(self):
         """__len__"""

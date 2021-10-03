@@ -2,7 +2,7 @@ model:
     arch: hardnet
 data:
     dataset: base_cityscapes_convention
-    version: scooter_halflabelled
+    version: scooter_labelled, 080420_scooter_halflabelled
     train_split: train
     val_split: val
     img_rows: 513 #1024
